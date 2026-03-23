@@ -1,0 +1,61 @@
+---
+title: "Poner título"
+author: 
+    Alonso González Romero
+    Daniel López Paredes
+    Alba Martínez de la Hermosa
+date: today
+format: 
+    html:
+        css: style.css
+        embed-resources: true
+toc: true
+toc-depth: 3
+number-sections: true
+lang: es
+---
+
+```{python}
+#| echo: false
+# Importación de librerías
+import pandas as pd
+import numpy as np
+```
+
+```{python}
+#| echo: false
+# Importación del dataset
+datos_badminton = pd.read_excel("datos_badminton.xlsx")
+```
+
+# Análisis básico del dataset
+
+Escribir aquí
+
+## Estadísticas de las zonas de golpeo
+
+Escribir aquí
+
+# Secuencias de golpeo
+
+Esciribir aquí
+
+## Estadísticas de secuencias de golpeo
+
+Escribir aquí
+
+# Extracción de patrones de longitud 3
+
+Escribir aquí
+
+## Patrones de longitud 3 más frecuentes
+
+Escribir aquí
+
+# Construcción de la matriz de Markov
+
+Escribir aquí
+
+# Probabilidad de ganar el punto para cada patrón
+
+Escribir aquí
