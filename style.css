@@ -59,3 +59,14 @@ p, li {
 .quarto-title-block .date {
   text-align: left !important;
 }
+
+/* --- Tabla de contenidos sin justificación --- */
+#TOC, .toc, nav#TOC, .sidebar nav[role="doc-toc"] {
+  text-align: left !important;
+  text-justify: none !important;
+}
+
+#TOC * , .toc * , nav#TOC * , .sidebar nav[role="doc-toc"] * {
+  text-align: left !important;
+  text-justify: none !important;
+}

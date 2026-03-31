@@ -1,12 +1,13 @@
 ---
-title: "Poner título"
+title: "La probabilidad de ganar un punto en bádminton. Un análisis de los patrones de golpeo."
 author: 
-    Alonso González Romero
-    Daniel López Paredes
-    Alba Martínez de la Hermosa
+    - Alonso González Romero
+    - Daniel López Paredes
+    - Alba Martínez de la Hermosa
 date: today
 format: 
     html:
+        code-fold: true
         css: style.css
         embed-resources: true
 toc: true
@@ -20,29 +21,349 @@ lang: es
 # Importación de librerías
 import pandas as pd
 import numpy as np
+from numpy import dtype
+from pandas import describe_option
+import openpyxl
+import matplotlib.pyplot as plt
+import seaborn as sns
+from itables import show
 ```
 
 ```{python}
 #| echo: false
 # Importación del dataset
-datos_badminton = pd.read_excel("datos_badminton.xlsx")
+datos_badminton = pd.read_excel("datos_badminton.xlsx", engine="calamine")
 ```
+
+# Introducción
+
+La ganancia de puntos en los deportes de raqueta se consigue enviando la pelota o el volante a una zona de la pista a la que el contrincante no es capaz de llegar para devolver el golpe. En bádminton, los partidos se ganan al mejor de 3 **sets**. Para ganar un set se deben conseguir 21 **puntos** con una distancia mínima de 2 con respecto al contrario. En caso de una distancia menor, la puntuación por set puede alcanzar un máximo de 30 puntos.
+
+Para sumar dichos puntos al marcador se deben ganar los rallies. Un **rally** es la secuencia completa desde que un jugador saca hasta que el volante toca el suelo, va fuera de la pista o acaba en la red. Cada vez que uno de los contrincantes saca, comienza un nuevo rally. Este está compuesto por intercambios entre los jugadores, llamados **stroke**. En otras palabras, un stroke ocurre cada vez que el volante sobrepasa la red.
+
+La pista se divide en dos campos a cada lado de la red, cada uno de los cuales se estructura en **12 zonas de golpeo**. Las zonas de juego son la base para la planificación de estrategias de juego; a partir de ellas surgen preguntas como:
+
+- ¿Qué zonas son las más habituales para golpear?
+- ¿Qué secuencias (intercambios de una zona a otra entre los dos jugadores) son las más frecuentes?
+- ¿Cuáles de esas zonas y/o secuencias tienen mayor probabilidad de llevar a la consecución del punto?
+- ¿Qué zonas y/o secuencias son el punto fuerte y punto débil propio y del rival?
+
+Para resolver estas preguntas, en el presente análisis se utilizan varios datos de partidos de Carolina Marín. 
+Se estudiarán las zonas y secuencias de golpeo con el objetivo de conocer la probabilidad de ganar un punto de dicha jugadora.
 
 # Análisis básico del dataset
 
-Escribir aquí
+Los datos de los partidos se han cargado en el dataset *datos_badminton*. 
 
-## Estadísticas de las zonas de golpeo
+Se comienza con un análisis básico de comprobación de calidad y reconocimiento de los datos.
 
-Escribir aquí
+```{python}
+# 1. Primeras filas
+print("--- Primeras Filas ---")
+print(datos_badminton.head())
+
+# 2. Información de columnas: Nombre, Tipo de Dato y Nulos
+print("\n--- Estructura y Nulos ---")
+resumen_columnas = pd.DataFrame({
+    'Columna': datos_badminton.columns,
+    'Tipo': datos_badminton.dtypes.values,
+    'Nulos': datos_badminton.isnull().sum().values
+})
+print(resumen_columnas)
+
+# 3. Duplicados
+print(f"\nTotal de filas duplicadas: {datos_badminton.duplicated().sum()}")
+```
+
+Se observan los tipos de dato que hay en cada columna y se comprueba que no hay valores faltantes ni duplicados de ningún set, rally, stroke o punto. Por tanto, los datos se presentan limpios para su tratamiento.
+
+## Estadísticas básicas de los partidos
+
+Conociendo las características principales del dataset y lo que significa cada una de las variables, se procede a obtener unas estadísticas básicas de los partidos que ha jugado Carolina Marín.
+
+En la primera tabla se observa resumidamente la puntuación por set de Carolina Marín y de su contricante en cada uno de los partidos.
+
+```{python}
+# Obtener la puntuación final de cada jugadora por cada set
+resumen_sets = datos_badminton.groupby(['Match', 'Set', 'Player1', 'Player2'])[['Player 1 Score', 'Player 2 Score']].max().reset_index()
+
+print("--- Puntos por Set ---")
+print(resumen_sets)
+```
+
+En la segunda tabla que se presenta a continuación se cuenta el total de sets ganados a lo largo de todos los partidos para todas las jugadoras.
+
+```{python}
+resumen_sets['Ganadora_Set'] = np.where(
+    resumen_sets['Player 1 Score'] > resumen_sets['Player 2 Score'], 
+    resumen_sets['Player1'], 
+    resumen_sets['Player2']
+)
+
+sets_totales = resumen_sets['Ganadora_Set'].value_counts().reset_index()
+
+print("\n--- Total de Sets Ganados ---")
+print(sets_totales.to_string(index=False))
+```
+
+Se ve que en todos los partidos del dataset, solo una jugadora ganó un set contra Carolina Marín, el único de los partidos que llegó a 3 sets.
+
+Por último, se busca quién fue la ganadora de cada uno de los 5 partidos, siendo en todos ellos Carolina Marín.
+
+```{python}
+conteo_sets_partido = resumen_sets.groupby(['Match', 'Ganadora_Set']).size().reset_index(name='Sets_Ganados')
+
+ganadoras_partido = conteo_sets_partido.sort_values('Sets_Ganados', ascending=False).drop_duplicates('Match')
+
+ganadoras_partido = ganadoras_partido[['Match', 'Ganadora_Set']].rename(columns={
+    'Match': 'Partido', 
+    'Ganadora_Set': 'Ganadora del Partido'
+})
+
+print("--- Ganadora de cada Partido ---")
+print(ganadoras_partido.to_string(index=False))
+```
+
+# Estadísticas de las zonas de golpeo
+
+Habiendo realizado un vistazo general a los partidos de la jugadora española, se procede a analizar en profundidad el juego obteniendo las estadísticas de las zonas y las secuencias de golpeo.
+
+En primer lugar, se hace un recuento de las zonas de golpeo más frecuentes en el total de los partidos, sin hacer distinción por el momento entre jugadoras.
+
+```{python}
+frecuencia_zonas_golpeo = datos_badminton['Zone'].value_counts().reset_index()
+frecuencia_zonas_golpeo.columns = ['Zonas de golpeo', 'Frecuencia']
+
+print("--- Zonas de golpeo más habituales en los partidos ---")
+print(frecuencia_zonas_golpeo.head(10).to_string(index=False))
+```
+
+En la siguiente tabla se observan las zonas más frecuentes de golpeo por cada partido.
+
+```{python}
+frecuencias_golpeo_partido = datos_badminton.groupby(['Match'], sort=False)['Zone'].value_counts().reset_index()
+frecuencias_golpeo_partido.columns = ['Partido', 'Zonas de golpeo', 'Frecuencia']
+
+print("--- Zonas de golpeo más habituales en cada partido ---")
+print(frecuencias_golpeo_partido.head(10).to_string(index=False))
+```
+
+Teniendo ya las estadísticas generales, se observan las zonas más frecuentes para Carolina. Primeramete, se hace un conteo de todos los partidos. Este mismo conteo se presenta dividido por partidos inmediatamente después.
+
+```{python}
+frecuencia_zonas_golpeo_Carolina = datos_badminton.groupby(['Jugador del golpeo'])['Zone'].value_counts().reset_index()
+frecuencia_zonas_golpeo_Carolina.columns = ['Jugadora', 'Zonas de golpeo', 'Frecuencia']
+
+print("--- Zonas de golpeo más habituales de Carolina Marín en los partidos ---")
+print(frecuencia_zonas_golpeo_Carolina.head(10).to_string(index=False))
+```
+
+```{python}
+datos_Carolina = datos_badminton[datos_badminton['Jugador del golpeo'] == 'Carolina Marin']
+
+frecuencias_golpeo_partido_Carolina = datos_Carolina.groupby(['Match', 'Jugador del golpeo'], sort=False)['Zone'].value_counts().reset_index()
+frecuencias_golpeo_partido_Carolina.columns = ['Partido', 'Jugadora', 'Zonas de golpeo', 'Frecuencia']
+
+print("--- Zonas de golpeo más habituales en cada partido ---")
+print(frecuencias_golpeo_partido_Carolina.head(10).to_string(index=False))
+```
+
+Después del conteo básico, es importante conocer cuál de esas zonas es la que con más probabilidad hará ganar el punto a Carolina. Para ello se observa cuál ha sido la zona final de cada rally y si en esa zona la puntuación de Carolina en la columna *Player 1 Score* ha aumentado en una unidad. Siguiendo con la misma dinámica, primero se presenta esta información para todos los partidos. Seguidamente, se divide por encuentros. 
+
+```{python}
+def analizar_zonas_y_puntos(df):
+    df_temp = df.copy()
+    
+    # 1. Identificar el resultado de cada rally. Agrupar para saber el score final y la última zona de cada rally
+    rallies = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
+        'Player 1 Score': 'max',
+        'Zone': list,  # Guardamos la secuencia de zonas
+    }).reset_index()
+    
+    # 2. Determinar si Player1 ganó el punto (comparando con el rally anterior)
+    rallies['Score_Previo_P1'] = rallies.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
+    rallies['Gana_P1'] = rallies['Player 1 Score'] > rallies['Score_Previo_P1']
+    
+    # 3. Extraer la "Zona Final" de cada rally
+    rallies['Zona_Final'] = rallies['Zone'].apply(lambda x: x[-1])
+    
+    # 4. Filtrar solo los rallies que ganó Player1
+    rallies_ganados_p1 = rallies[rallies['Gana_P1'] == True]
+    
+    # 5. Contar cuántos puntos ganó P1 en cada zona final
+    resumen_zonas = rallies_ganados_p1['Zona_Final'].value_counts().reset_index()
+    resumen_zonas.columns = ['Zona', 'Puntos Ganados']
+    
+    # 6. Calcular efectividad: ¿Qué % de veces que el rally acaba en esa zona gana P1?
+    total_por_zona = rallies['Zona_Final'].value_counts().reset_index()
+    total_por_zona.columns = ['Zona', 'Total Rallies Finalizados']
+    
+    comparativa = resumen_zonas.merge(total_por_zona, on='Zona')
+    comparativa['% Efectividad P1'] = (comparativa['Puntos Ganados'] / comparativa['Total Rallies Finalizados'] * 100).round(2)
+    
+    orden_columnas = ['Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']
+    comparativa = comparativa[orden_columnas]
+
+    return comparativa.sort_values(by='Puntos Ganados', ascending=False)
+
+analisis_zonas = analizar_zonas_y_puntos(datos_badminton)
+print("--- Relación de Zonas Finales y Puntos Ganados por Player1 ---")
+print(analisis_zonas.to_string(index=False))
+```
+
+Tomando la fila de la zona 1 de ejemplo, se observa que 25 puntos (columna *Total Rallies Finalizados*) acabaron en la zona 1. De esos 25 puntos, 22 los ganó Carolina (columna *Puntos Ganados*), consiguiendo una efectividad (puntos ganados en esa zona / total de rallies finalizados en esa zona) del 88% en zona 1.
+
+Poniendo la atención en "Out" se observa que 69 puntos la secuencia de golepos acaba fuera de la pista, de los cuales 41 los gana Carolina. Es decir, solamente en 28 de 69 ocasiones Carolina ha enviado fuera el volante en comparación con las 41 de sus rivales.
+
+```{python}
+def analizar_zonas_y_puntos_partido(df):
+    df_temp = df.copy()
+    
+    # 1. Identificar el resultado de cada rally
+    rallies = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
+        'Player 1 Score': 'max',
+        'Zone': list,
+    }).reset_index()
+    
+    # 2. Determinar si Player1 ganó el punto
+    rallies['Score_Previo_P1'] = rallies.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
+    rallies['Gana_P1'] = rallies['Player 1 Score'] > rallies['Score_Previo_P1']
+    
+    # 3. Extraer la "Zona Final" de cada rally
+    rallies['Zona_Final'] = rallies['Zone'].apply(lambda x: x[-1])
+    
+    # 4. Puntos ganados por P1 por partido y zona. Agrupar por Match y Zona_Final
+    resumen_zonas = rallies[rallies['Gana_P1'] == True].groupby(['Match', 'Zona_Final']).size().reset_index(name='Puntos Ganados')
+    
+    # 5. Total de veces que un rally terminó en esa zona (gane quien gane)
+    total_por_zona = rallies.groupby(['Match', 'Zona_Final']).size().reset_index(name='Total Rallies Finalizados')
+    
+    # 6. Unir los dos conteos usando las columnas que tienen en común
+    comparativa = resumen_zonas.merge(total_por_zona, on=['Match', 'Zona_Final'])
+    
+    # 7. Calcular la efectividad
+    comparativa['% Efectividad P1'] = (comparativa['Puntos Ganados'] / comparativa['Total Rallies Finalizados'] * 100).round(2)
+    
+    # Renombrar columnas finales para que se vea bien en el print
+    comparativa.columns = ['Partido', 'Zona', 'Puntos Ganados', 'Total Rallies Finalizados', '% Efectividad P1']
+    
+    orden_columnas = ['Partido', 'Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']
+    comparativa = comparativa[orden_columnas]
+
+    return comparativa.sort_values(by=['Partido', 'Puntos Ganados'], ascending=[True, False])
+
+analisis_zonas_partido = analizar_zonas_y_puntos_partido(datos_badminton)
+print("--- Relación de Zonas Finales y Puntos Ganados por Player1 en cada partido ---")
+print(analisis_zonas_partido.to_string(index=False))
+```
 
 # Secuencias de golpeo
 
-Esciribir aquí
+Conociendo ya las frecuencias de las zonas de golpeo, se da un paso más para estudiar las secuencias de golpeo. En otras palabras, se observan las zonas desde donde se golpea el volante cada vez hasta que este toca el suelo, la red o va fuera de la pista.
+
+Para ello se muestra una tabla en la que se presentan las secuencias de golpeo de cada rally por partido y set.
+
+```{python}
+def procesar_secuencias_badminton_partido(df):
+    df = datos_badminton.copy() # Hacer una copia para no alterar el original
+    # 1. Limpieza
+    df['Zone'] = df['Zone'].astype(str).str.strip()
+    
+    # 2. El ID de secuencia debe cambiar si cambia el Partido, el Set O el Rally
+    cambio_contexto = (df['Match'] != df['Match'].shift()) | \
+                      (df['Set'] != df['Set'].shift()) | \
+                      (df['Rally'] != df['Rally'].shift())
+    
+    df['secuencia_id'] = cambio_contexto.cumsum()
+    
+    tabla = df.groupby(['Match', 'Set', 'Rally', 'secuencia_id'], sort=False).agg({
+        'Zone': lambda x: ' -> '.join(x),
+        'Stroke': max}).reset_index()
+    
+    # 3. Seleccionar columnas finales
+    tabla = tabla[['Match', 'Set', 'Rally', 'Stroke', 'Zone']]
+    tabla.columns = ['Partido', 'Set', 'Rally', 'Número de Golpes', 'Secuencia de Zonas']
+    
+    return tabla
+
+resultado = procesar_secuencias_badminton_partido(datos_badminton)
+show(resultado)
+```
+
+En esta tabla aparecen las secuencias de todos los rallies, independientemente de quién los ganara. 
+
+A continuación se presenta la misma información solo para los rallies que llevaron a Carolina a ganar un punto.
+
+```{python}
+def analizar_puntos_jugadora1(df):
+    df_temp = df.copy()
+    
+    # 1. Identificar el final de cada rally y el score en ese momento. Agrupar por Partido, Set y Rally para obtener el máximo score alcanzado
+    puntos_por_rally = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
+        'Player 1 Score': 'max',
+        'Zone': lambda x: ' -> '.join(x.astype(str).str.strip()),
+        'Stroke': 'max'
+    }).reset_index()
+    
+    # 2. Calcular si el punto fue para la Jugadora 1. 
+    # Se compara el score actual con el del rally anterior (dentro del mismo set y partido). Se usa shift() para ver el score previo. Si aumentó, es punto ganado. Para el primer punto (0 a 1), el shift será NaN, así que se llena con 0.
+    puntos_por_rally['Score_Previo'] = puntos_por_rally.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
+    puntos_por_rally['Gana_Punto_J1'] = puntos_por_rally['Player 1 Score'] > puntos_por_rally['Score_Previo']
+    
+    # 3. Filtrar solo las secuencias donde ganó la Jugadora 1
+    secuencias_ganadoras = puntos_por_rally[puntos_por_rally['Gana_Punto_J1'] == True].copy()
+    
+    # 4. Limpiar y renombrar
+    secuencias_ganadoras = secuencias_ganadoras[['Match', 'Set', 'Rally', 'Stroke', 'Zone']]
+    secuencias_ganadoras.columns = ['Partido', 'Set', 'Rally', 'Número de Golpes', 'Secuencia Ganadora J1']
+    
+    return secuencias_ganadoras
+
+resultado_p1 = analizar_puntos_jugadora1(datos_badminton)
+show(resultado_p1)
+```
 
 ## Estadísticas de secuencias de golpeo
 
-Escribir aquí
+Habiendo obtenido las secuencias en cada rally, se calcula cuáles son las longitudes de secuencia más frecuentes en todos los partidos y en cada partido.
+
+```{python}
+frecuencia_longitudes = resultado['Número de Golpes'].value_counts().reset_index()
+frecuencia_longitudes.columns = ['Número de Golpes', 'Frecuencia']
+
+print("--- Longitudes más habituales en los partidos ---")
+print(frecuencia_longitudes.head(10).to_string(index=False))
+```
+
+```{python}
+frecuencia_longitudes_partido = resultado.groupby(['Partido'], sort=False)['Número de Golpes'].value_counts().reset_index()
+frecuencia_longitudes_partido.columns = ['Partido', 'Número de Golpes', 'Frecuencia']
+frecuencia_longitudes_partido = frecuencia_longitudes_partido.sort_values(by=['Partido', 'Frecuencia'], 
+    ascending=[True, False])
+
+print("--- Longitudes más habituales en cada partido ---")
+print(frecuencia_longitudes_partido.head(10).to_string(index=False))
+```
+
+Ahora, es interesante qué conocer qué secuencias hacen que Carolina gane un punto con más frecuencia. Se calcula esta frecuencia para todos los partidos y para cada partido.
+
+```{python}
+frecuencia_longitudes_p1 = resultado_p1['Número de Golpes'].value_counts().reset_index()
+frecuencia_longitudes_p1.columns = ['Número de Golpes', 'Frecuencia (Puntos Ganados)']
+
+print("--- Longitudes más habituales de puntos ganados por Carolina Marín en todos los partidos ---")
+print(frecuencia_longitudes_p1.head(10).to_string(index=False))
+```
+
+```{python}
+frecuencia_longitudes_p1_partido = resultado_p1.groupby(['Partido'], sort=False)['Número de Golpes'].value_counts().reset_index()
+frecuencia_longitudes_p1_partido.columns = ['Partido', 'Número de Golpes', 'Frecuencia (Puntos Ganados)']
+frecuencia_longitudes_p1_partido = frecuencia_longitudes_p1_partido.sort_values(by=['Partido', 'Frecuencia (Puntos Ganados)'], 
+    ascending=[True, False])
+
+print("--- Longitudes más habituales de puntos ganados por Carolina Marín en cada partido ---")
+print(frecuencia_longitudes_p1_partido.head(10).to_string(index=False))
+```
 
 # Extracción de patrones de longitud 3
 
