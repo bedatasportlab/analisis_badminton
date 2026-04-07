@@ -25,6 +25,7 @@ from numpy import dtype
 from pandas import describe_option
 import openpyxl
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import seaborn as sns
 from itables import show
 ```
@@ -88,7 +89,7 @@ En la primera tabla se observa resumidamente la puntuación por set de Carolina 
 resumen_sets = datos_badminton.groupby(['Match', 'Set', 'Player1', 'Player2'])[['Player 1 Score', 'Player 2 Score']].max().reset_index()
 
 print("--- Puntos por Set ---")
-print(resumen_sets)
+show(resumen_sets)
 ```
 
 En la segunda tabla que se presenta a continuación se cuenta el total de sets ganados a lo largo de todos los partidos para todas las jugadoras.
@@ -127,6 +128,147 @@ print(ganadoras_partido.to_string(index=False))
 # Estadísticas de las zonas de golpeo
 
 Habiendo realizado un vistazo general a los partidos de la jugadora española, se procede a analizar en profundidad el juego obteniendo las estadísticas de las zonas y las secuencias de golpeo.
+
+Antes de comenzar, el siguiente código muestra un campograma de una pista de badminton. Más adelante pintaremos sobre él las zonas de golpeo más frecuentes y distintas estadísticas.
+
+```{python}
+import matplotlib.patches as patches
+from matplotlib.colors import Normalize
+
+def dibujar_mapa_badminton_zonas(valores_superior=None, valores_inferior=None, mostrar_porcentaje=True, cmap=plt.cm.Blues):
+    fig, ax = plt.subplots(figsize=(8, 11))
+
+    ancho = 4
+    alto_mitad = 3
+    alto_total = alto_mitad * 2
+    color_fondo = '#dbeeff'
+    color_borde = '#f4b6b6'
+
+    ax.set_xlim(0, ancho)
+    ax.set_ylim(0, alto_total)
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+    # Fondo de la pista completa
+    pista = patches.Rectangle((0, 0), ancho, alto_total, facecolor=color_fondo, edgecolor='none')
+    ax.add_patch(pista)
+
+    # Contorno exterior y red central
+    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, fill=False, edgecolor='gray', linewidth=1.8))
+    ax.plot([0, ancho], [alto_mitad, alto_mitad], color='black', linewidth=2.2)
+
+    # Zonas 4x3 en cada mitad
+    zona_ancho = ancho / 4
+    zona_alto = alto_mitad / 3
+
+    def preparar_matriz(valores):
+        if valores is None:
+            return None
+        matriz = np.asarray(valores, dtype=float)
+        if matriz.shape != (3, 4):
+            raise ValueError('Cada mitad debe tener una matriz de 3 filas x 4 columnas.')
+        return matriz
+
+    valores_superior = preparar_matriz(valores_superior)
+    valores_inferior = preparar_matriz(valores_inferior)
+
+    todas_las_medidas = []
+    for matriz in [valores_superior, valores_inferior]:
+        if matriz is not None:
+            todas_las_medidas.append(matriz.ravel())
+
+    if todas_las_medidas:
+        medidas = np.concatenate(todas_las_medidas)
+        medidas = medidas[~np.isnan(medidas)]
+        minimo = float(np.min(medidas))
+        maximo = float(np.max(medidas))
+        normalizador = Normalize(vmin=minimo, vmax=maximo if maximo > minimo else minimo + 1)
+    else:
+        normalizador = None
+
+    def dibujar_mitad(origen_y, etiquetas, valores=None):
+        for fila in range(3):
+            for columna in range(4):
+                x = columna * zona_ancho
+                y = origen_y + fila * zona_alto
+
+                valor = None if valores is None else valores[fila, columna]
+                if normalizador is not None and valor is not None and not np.isnan(valor):
+                    color_relleno = cmap(0.20 + 0.70 * normalizador(valor))
+                    alpha = 0.95
+                else:
+                    color_relleno = color_fondo
+                    alpha = 1.0
+
+                zona = patches.FancyBboxPatch(
+                    (x, y),
+                    zona_ancho,
+                    zona_alto,
+                    boxstyle='round,pad=0.02,rounding_size=0.08',
+                    facecolor=color_relleno,
+                    edgecolor=color_borde,
+                    linewidth=1.6,
+                    alpha=alpha,
+                )
+                ax.add_patch(zona)
+
+                etiqueta = etiquetas[fila][columna]
+                color_texto = 'white' if (normalizador is not None and valor is not None and not np.isnan(valor) and normalizador(valor) > 0.55) else 'black'
+                ax.text(
+                    x + zona_ancho / 2,
+                    y + zona_alto / 2 + (0.10 if mostrar_porcentaje and valor is not None else 0.0),
+                    str(etiqueta),
+                    ha='center',
+                    va='center',
+                    fontsize=17,
+                    fontweight='bold',
+                    color=color_texto,
+                )
+
+                if mostrar_porcentaje and valor is not None and not np.isnan(valor):
+                    valor_mostrado = valor
+                    if abs(valor_mostrado) <= 1:
+                        valor_mostrado *= 100
+                    ax.text(
+                        x + zona_ancho / 2,
+                        y + zona_alto / 2 - 0.20,
+                        f'{valor_mostrado:.1f}%',
+                        ha='center',
+                        va='center',
+                        fontsize=9,
+                        fontweight='normal',
+                        color=color_texto,
+                    )
+
+    # Mitad superior: numeración de 12 a 1 empezando en la esquina superior derecha
+    etiquetas_superiores = [
+        [4,3,2,1],
+        [8,7,6,5],
+        [12,11,10,9],
+    ]
+
+    # Mitad inferior: numeración de 1 a 12 empezando en la esquina superior derecha
+    etiquetas_inferiores = [
+        [9,10,11,12],
+        [5,6,7,8],
+        [1,2,3,4],
+    ]
+
+    dibujar_mitad(alto_mitad, etiquetas_superiores, valores_superior)
+    dibujar_mitad(0, etiquetas_inferiores, valores_inferior)
+
+    # Líneas interiores de cada mitad
+    for x in [1, 2, 3]:
+        ax.plot([x, x], [0, alto_total], color='white', linewidth=1.1, alpha=0.6)
+
+    for y in [1, 2, 4, 5]:
+        ax.plot([0, ancho], [y, y], color='white', linewidth=1.1, alpha=0.6)
+
+    plt.tight_layout()
+    plt.show()
+
+dibujar_mapa_badminton_zonas()
+```
 
 En primer lugar, se hace un recuento de las zonas de golpeo más frecuentes en el total de los partidos, sin hacer distinción por el momento entre jugadoras.
 
@@ -257,6 +399,162 @@ print("--- Relación de Zonas Finales y Puntos Ganados por Player1 en cada parti
 print(analisis_zonas_partido.to_string(index=False))
 ```
 
+```{python}
+def construir_matrices_metricas(resumen, columna_metricas):
+    mapa_valores = {}
+    for _, fila in resumen.iterrows():
+        zona = fila['Zona']
+        if isinstance(zona, (int, np.integer)):
+            clave = int(zona)
+        else:
+            zona_txt = str(zona).strip()
+            if zona_txt.isdigit():
+                clave = int(zona_txt)
+            else:
+                continue
+        mapa_valores[clave] = float(fila[columna_metricas])
+
+    etiquetas_superior = [[9, 10, 11, 12], [5, 6, 7, 8], [1, 2, 3, 4]]
+    etiquetas_inferior = [[4, 3, 2, 1], [8, 7, 6, 5], [12, 11, 10, 9]]
+
+    valores_superior = np.array([[mapa_valores.get(z, np.nan) for z in fila] for fila in etiquetas_superior], dtype=float)
+    valores_inferior = np.array([[mapa_valores.get(z, np.nan) for z in fila] for fila in etiquetas_inferior], dtype=float)
+
+    return etiquetas_superior, etiquetas_inferior, valores_superior, valores_inferior
+
+
+def dibujar_campograma_metricas(ax, etiquetas_superior, etiquetas_inferior, valores_superior, valores_inferior, titulo, formato_valor, cmap):
+    ancho = 4
+    alto_mitad = 3
+    alto_total = 6
+    color_fondo = '#dbeeff'
+    color_borde = '#f4b6b6'
+
+    ax.set_xlim(0, ancho)
+    ax.set_ylim(0, alto_total)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    ax.set_title(titulo, fontsize=12, fontweight='bold', pad=12)
+
+    valores = np.concatenate([valores_superior.ravel(), valores_inferior.ravel()])
+    valores = valores[~np.isnan(valores)]
+    if len(valores) > 0:
+        minimo = float(valores.min())
+        maximo = float(valores.max())
+        normalizador = Normalize(vmin=minimo, vmax=maximo if maximo > minimo else minimo + 1)
+    else:
+        normalizador = None
+
+    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, facecolor=color_fondo, edgecolor='none'))
+    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, fill=False, edgecolor='gray', linewidth=1.8))
+    ax.plot([0, ancho], [alto_mitad, alto_mitad], color='black', linewidth=2.2)
+
+    zona_ancho = ancho / 4
+    zona_alto = alto_mitad / 3
+
+    def pintar_mitad(origen_y, etiquetas, valores_matriz):
+        for fila in range(3):
+            for columna in range(4):
+                x = columna * zona_ancho
+                y = origen_y + fila * zona_alto
+                valor = valores_matriz[fila, columna]
+
+                if normalizador is not None and not np.isnan(valor):
+                    color_relleno = cmap(0.20 + 0.70 * normalizador(valor))
+                else:
+                    color_relleno = color_fondo
+
+                zona = patches.FancyBboxPatch(
+                    (x, y),
+                    zona_ancho,
+                    zona_alto,
+                    boxstyle='round,pad=0.02,rounding_size=0.08',
+                    facecolor=color_relleno,
+                    edgecolor=color_borde,
+                    linewidth=1.6,
+                )
+                ax.add_patch(zona)
+
+                texto_color = 'white' if normalizador is not None and not np.isnan(valor) and normalizador(valor) > 0.55 else 'black'
+                ax.text(
+                    x + zona_ancho / 2,
+                    y + zona_alto / 2 + 0.10,
+                    str(etiquetas[fila][columna]),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    fontweight='bold',
+                    color=texto_color,
+                )
+                if not np.isnan(valor):
+                    ax.text(
+                        x + zona_ancho / 2,
+                        y + zona_alto / 2 - 0.17,
+                        formato_valor(valor),
+                        ha='center',
+                        va='center',
+                        fontsize=9,
+                        color=texto_color,
+                    )
+
+    pintar_mitad(alto_mitad, etiquetas_superior, valores_superior)
+    pintar_mitad(0, etiquetas_inferior, valores_inferior)
+
+    for x in [1, 2, 3]:
+        ax.plot([x, x], [0, alto_total], color='white', linewidth=1.1, alpha=0.6)
+
+    for y in [1, 2, 4, 5]:
+        ax.plot([0, ancho], [y, y], color='white', linewidth=1.1, alpha=0.6)
+
+
+fig = plt.figure(figsize=(13, 7.5), constrained_layout=True)
+gs = fig.add_gridspec(2, 3, height_ratios=[10, 1.4])
+
+metricas = [
+    ('Total Rallies Finalizados', 'Total Rallies Finalizados', plt.cm.Blues, lambda v: f'{v:.0f}'),
+    ('Puntos Ganados', 'Puntos Ganados', plt.cm.Greens, lambda v: f'{v:.0f}'),
+    ('% Efectividad P1', '% Efectividad P1', plt.cm.Oranges, lambda v: f'{v:.2f}%'),
+]
+
+for indice, (titulo, columna_metricas, cmap, formato_valor) in enumerate(metricas):
+    ax = fig.add_subplot(gs[0, indice])
+    etiquetas_superior, etiquetas_inferior, valores_superior, valores_inferior = construir_matrices_metricas(
+        analisis_zonas,
+        columna_metricas,
+    )
+    dibujar_campograma_metricas(
+        ax,
+        etiquetas_superior,
+        etiquetas_inferior,
+        valores_superior,
+        valores_inferior,
+        titulo,
+        formato_valor,
+        cmap,
+    )
+
+ax_tabla = fig.add_subplot(gs[1, :])
+ax_tabla.axis('off')
+
+zonas_especiales = analisis_zonas[analisis_zonas['Zona'].isin(['Red', 'Out'])].copy()
+if not zonas_especiales.empty:
+    zonas_especiales = zonas_especiales[['Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']]
+    tabla = ax_tabla.table(
+        cellText=zonas_especiales.values,
+        colLabels=zonas_especiales.columns,
+        cellLoc='center',
+        loc='center',
+    )
+    tabla.auto_set_font_size(False)
+    tabla.set_fontsize(10)
+    tabla.scale(1, 1.15)
+    ax_tabla.set_title('Resumen de zonas especiales', fontsize=11, fontweight='bold', pad=8)
+else:
+    ax_tabla.text(0.5, 0.5, 'No se encontraron filas para Red / Out en analisis_zonas.', ha='center', va='center')
+
+plt.show()
+```
+
 # Secuencias de golpeo
 
 Conociendo ya las frecuencias de las zonas de golpeo, se da un paso más para estudiar las secuencias de golpeo. En otras palabras, se observan las zonas desde donde se golpea el volante cada vez hasta que este toca el suelo, la red o va fuera de la pista.
@@ -292,7 +590,7 @@ show(resultado)
 
 En esta tabla aparecen las secuencias de todos los rallies, independientemente de quién los ganara. 
 
-A continuación se presenta la misma información solo para los rallies que llevaron a Carolina a ganar un punto.
+A continuación se presenta la misma información para todos los rallies, añadiendo una columna que indica si Carolina ganó el punto.
 
 ```{python}
 def analizar_puntos_jugadora1(df):
@@ -310,14 +608,11 @@ def analizar_puntos_jugadora1(df):
     puntos_por_rally['Score_Previo'] = puntos_por_rally.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
     puntos_por_rally['Gana_Punto_J1'] = puntos_por_rally['Player 1 Score'] > puntos_por_rally['Score_Previo']
     
-    # 3. Filtrar solo las secuencias donde ganó la Jugadora 1
-    secuencias_ganadoras = puntos_por_rally[puntos_por_rally['Gana_Punto_J1'] == True].copy()
+    # 3. Limpiar y renombrar sin perder ningún rally
+    secuencias_rallies = puntos_por_rally[['Match', 'Set', 'Rally', 'Stroke', 'Zone', 'Gana_Punto_J1']].copy()
+    secuencias_rallies.columns = ['Partido', 'Set', 'Rally', 'Número de Golpes', 'Secuencia de Zonas', 'Gana_Punto_J1']
     
-    # 4. Limpiar y renombrar
-    secuencias_ganadoras = secuencias_ganadoras[['Match', 'Set', 'Rally', 'Stroke', 'Zone']]
-    secuencias_ganadoras.columns = ['Partido', 'Set', 'Rally', 'Número de Golpes', 'Secuencia Ganadora J1']
-    
-    return secuencias_ganadoras
+    return secuencias_rallies
 
 resultado_p1 = analizar_puntos_jugadora1(datos_badminton)
 show(resultado_p1)
@@ -345,38 +640,348 @@ print("--- Longitudes más habituales en cada partido ---")
 print(frecuencia_longitudes_partido.head(10).to_string(index=False))
 ```
 
-Ahora, es interesante qué conocer qué secuencias hacen que Carolina gane un punto con más frecuencia. Se calcula esta frecuencia para todos los partidos y para cada partido.
+Ahora, es interesante conocer qué secuencias son más frecuentes en todos los rallies. Se calcula esta frecuencia para todos los partidos y para cada partido.
 
 ```{python}
-frecuencia_longitudes_p1 = resultado_p1['Número de Golpes'].value_counts().reset_index()
-frecuencia_longitudes_p1.columns = ['Número de Golpes', 'Frecuencia (Puntos Ganados)']
+frecuencia_longitudes_rallies = resultado_p1['Número de Golpes'].value_counts().reset_index()
+frecuencia_longitudes_rallies.columns = ['Número de Golpes', 'Frecuencia (Todos los rallies)']
 
-print("--- Longitudes más habituales de puntos ganados por Carolina Marín en todos los partidos ---")
-print(frecuencia_longitudes_p1.head(10).to_string(index=False))
+print("--- Longitudes más habituales en todos los rallies ---")
+print(frecuencia_longitudes_rallies.head(10).to_string(index=False))
 ```
 
 ```{python}
-frecuencia_longitudes_p1_partido = resultado_p1.groupby(['Partido'], sort=False)['Número de Golpes'].value_counts().reset_index()
-frecuencia_longitudes_p1_partido.columns = ['Partido', 'Número de Golpes', 'Frecuencia (Puntos Ganados)']
-frecuencia_longitudes_p1_partido = frecuencia_longitudes_p1_partido.sort_values(by=['Partido', 'Frecuencia (Puntos Ganados)'], 
+frecuencia_longitudes_rallies_partido = resultado_p1.groupby(['Partido'], sort=False)['Número de Golpes'].value_counts().reset_index()
+frecuencia_longitudes_rallies_partido.columns = ['Partido', 'Número de Golpes', 'Frecuencia (Todos los rallies)']
+frecuencia_longitudes_rallies_partido = frecuencia_longitudes_rallies_partido.sort_values(by=['Partido', 'Frecuencia (Todos los rallies)'], 
     ascending=[True, False])
 
-print("--- Longitudes más habituales de puntos ganados por Carolina Marín en cada partido ---")
-print(frecuencia_longitudes_p1_partido.head(10).to_string(index=False))
+print("--- Longitudes más habituales en cada partido ---")
+print(frecuencia_longitudes_rallies_partido.head(10).to_string(index=False))
 ```
 
 # Extracción de patrones de longitud 3
 
-Escribir aquí
+Una vez analizadas algunas estadísticas sobre los golpes y las secuencias, se da un paso más para conocer cuáles son los patrones de longitud 3 (secuencias de 3 golpes) más frecuentes en los partidos.
 
 ## Patrones de longitud 3 más frecuentes
 
-Escribir aquí
+El primer paso es extraer las secuencias de longitud 3 más frecuentes en todos los partidos y en cada partido. Con esto, se obtiene una visión general de los patrones de golpeo más habituales.
 
-# Construcción de la matriz de Markov
+```{python}
+def extraer_patrones_longitud_3(df):
+    df_temp = df.copy()
+    df_temp = df_temp.sort_values(['Match', 'Set', 'Rally', 'Stroke'])
+    
+    # 1. Agrupar los golpes en cada rally manteniendo el orden temporal
+    puntos_por_rally = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
+        'Zone': lambda x: x.astype(str).str.strip().tolist(),
+        'Stroke': 'max'
+    }).reset_index()
 
-Escribir aquí
+    # 2. Extraer todas las ventanas deslizantes de 3 golpes dentro de cada rally
+    def extraer_ventanas_3(zonas):
+        if len(zonas) < 3:
+            return []
+        return [' -> '.join(zonas[i:i + 3]) for i in range(len(zonas) - 2)]
+
+    puntos_por_rally['Patrón_3'] = puntos_por_rally['Zone'].apply(extraer_ventanas_3)
+    puntos_por_rally = puntos_por_rally.explode('Patrón_3').dropna(subset=['Patrón_3'])
+
+    # 3. Contar la frecuencia de cada patrón de longitud 3
+    frecuencia_patrones = puntos_por_rally['Patrón_3'].value_counts().reset_index()
+    frecuencia_patrones.columns = ['Patrón de Longitud 3', 'Frecuencia']
+    
+    return frecuencia_patrones
+
+frecuencia_patrones_longitud_3 = extraer_patrones_longitud_3(datos_badminton)
+
+print("--- Patrones de longitud 3 más frecuentes en todos los rallies ---")
+print(frecuencia_patrones_longitud_3.head(10))
+```
+
+## Comparación de patrones de longitud 3 entre Carolina Marín y sus rivales
+
+A continuación se comparan los patrones de longitud 3 más frecuentes entre Carolina Marín y sus rivales usando todos los rallies.
+
+En la siguiente gráfica se muestran los patrones de longitud 3 más frecuentes para Carolina Marín y para sus rivales en todos los rallies. Se pueden observar cuáles son los patrones más habituales para cada jugadora y comparar su frecuencia.
+
+
+```{python}
+def extraer_patrones_todos_desglose_jugadora(df):
+    df_temp = df.copy().sort_values(['Match', 'Set', 'Rally', 'Stroke'])
+    nombre_carolina = df_temp['Player1'].iloc[0]
+
+    puntos_por_rally = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
+        'Zone': lambda x: x.astype(str).str.strip().tolist(),
+        'Jugador del golpeo': lambda x: x.astype(str).str.strip().tolist()
+    }).reset_index()
+
+    registros = []
+    for _, fila in puntos_por_rally.iterrows():
+        zonas = fila['Zone']
+        jugadoras = fila['Jugador del golpeo']
+
+        if len(zonas) < 3:
+            continue
+
+        for i in range(len(zonas) - 2):
+            patron = ' -> '.join(zonas[i:i + 3])
+            jugadora_patron = jugadoras[i + 2]
+            registros.append({'Jugadora': jugadora_patron, 'Patrón de Longitud 3': patron})
+
+    patrones_df = pd.DataFrame(registros)
+    frecuencia = patrones_df.groupby(['Jugadora', 'Patrón de Longitud 3']).size().reset_index(name='Frecuencia')
+    return frecuencia, nombre_carolina
+
+
+frecuencia_todos_jugadoras, nombre_carolina = extraer_patrones_todos_desglose_jugadora(datos_badminton)
+
+# Tabla top 5 por jugadora (Carolina + hasta 8 rivales con mayor frecuencia total)
+top_rivales_todos_j = (
+    frecuencia_todos_jugadoras[frecuencia_todos_jugadoras['Jugadora'] != nombre_carolina]
+    .groupby('Jugadora', as_index=False)['Frecuencia'].sum()
+    .sort_values('Frecuencia', ascending=False)
+)
+jugadoras_plot_todos = [nombre_carolina] + top_rivales_todos_j['Jugadora'].head(8).tolist()
+
+tabla_top_todos = []
+for jugadora in jugadoras_plot_todos:
+    top_j = frecuencia_todos_jugadoras[frecuencia_todos_jugadoras['Jugadora'] == jugadora].nlargest(5, 'Frecuencia').copy()
+    top_j['Ranking'] = range(1, len(top_j) + 1)
+    tabla_top_todos.append(top_j[['Jugadora', 'Ranking', 'Patrón de Longitud 3', 'Frecuencia']])
+
+tabla_top_todos = pd.concat(tabla_top_todos, ignore_index=True)
+print('--- Tabla de patrones (todos los rallies) desglosada por jugadora ---')
+show(tabla_top_todos)
+
+# Gráficas pequeñas 3x3 (todos los rallies, desglosado por jugadora)
+fig, axes = plt.subplots(3, 3, figsize=(12, 10), constrained_layout=True)
+axes = axes.flatten()
+
+for idx, jugadora in enumerate(jugadoras_plot_todos[:9]):
+    ax = axes[idx]
+    datos_j = frecuencia_todos_jugadoras[frecuencia_todos_jugadoras['Jugadora'] == jugadora].nlargest(5, 'Frecuencia').copy()
+
+    if datos_j.empty:
+        ax.axis('off')
+        continue
+
+    datos_j = datos_j.sort_values('Frecuencia', ascending=True)
+    color = '#1f77b4' if jugadora == nombre_carolina else '#d62728'
+
+    ax.barh(datos_j['Patrón de Longitud 3'], datos_j['Frecuencia'], color=color)
+    ax.set_title(jugadora, fontsize=9)
+    ax.tick_params(axis='y', labelsize=7)
+    ax.tick_params(axis='x', labelsize=7)
+    ax.grid(axis='x', linestyle='--', alpha=0.25)
+
+for idx in range(len(jugadoras_plot_todos[:9]), 9):
+    axes[idx].axis('off')
+
+fig.suptitle('Patrones de longitud 3 (todos los rallies) desglosados por jugadora', fontsize=12)
+plt.show()
+```
+
+En el siguiente apartado, mediante cadenas de Markov, se analizará la probabilidad de ganar un punto a partir de los patrones de golpeo. Para ello, se construirá una matriz de transición entre las zonas de golpeo y se calculará la probabilidad de ganar el punto para cada patrón. Con ello se podrá conocer cuáles son los patrones de golpeo que más probabilidades tienen de llevar a la consecución del punto para Carolina Marín.
+
+# Cadenas de Markov para analizar la probabilidad de ganar un punto a partir de los patrones de golpeo
+
+En este último apartado, se construirá una matriz de transición entre las zonas de golpeo y se calculará la probabilidad de ganar el punto para cada patrón. Con ello se podrá conocer cuáles son los patrones de golpeo que más probabilidades tienen de llevar a la consecución de ganar un punto.
+
+# Cadenas de Markov
+
+Una cadena de Markov es un modelo matemático que describe un sistema que cambia de estado de manera probabilística. En este contexto, cada "estado" representa un patrón (secuencia de 3 golpes) y las transiciones entre estados representan la probabilidad de pasar de un patrón a otro en el siguiente golpe. Los pasos para implementar una cadena de Markov en este análisis son:
+
+1. **Definir los estados**: Cada patrón de longitud 3 se considerará un estado en la cadena de Markov. Que el punto se termine ganando o perdiendo se considerará un **estado absorbente**, es decir, un estado que una vez alcanzado no se sale de él.
+2. **Construir la matriz de transición**: Se calculará la frecuencia con la que se pasa de un patrón a otro en los rallies, lo que permitirá construir una matriz de transición que refleje estas probabilidades.
+
+## Construcción de la matriz de transición 
+
+Para construir la matriz de transición se sigue el siguiente procedimiento técnico:
+
+1. Se transforma cada rally en una secuencia de estados, donde cada estado es un patrón de 3 zonas consecutivas.
+2. Se filtran solo los patrones cuyo tercer golpe lo ejecuta Carolina Marín.
+3. Se cuentan transiciones entre esos patrones consecutivos de Carolina dentro del rally.
+4. Desde el último patrón de Carolina en cada rally se añade una transición al estado absorbente `GANA_PUNTO` o `PIERDE_PUNTO` (desde la perspectiva de Carolina).
+5. Se normalizan filas para obtener probabilidades de transición y construir la matriz $P$.
+6. Se reordena $P$ en forma canónica para cadenas absorbentes:
+
+$$
+P = \begin{pmatrix}
+Q & R \\
+0 & I
+\end{pmatrix}
+$$
+
+7. Se calcula la matriz fundamental $N=(I-Q)^{-1}$ y la matriz de absorción:
+
+$$
+B = N\,R
+$$
+
+donde cada fila de $B$ devuelve la probabilidad de acabar en `GANA_PUNTO` o `PIERDE_PUNTO` partiendo de un patrón concreto.
+
+```{python}
+def construir_modelo_markov_patrones(df):
+    df_temp = df.copy().sort_values(['Match', 'Set', 'Rally', 'Stroke'])
+    nombre_carolina = df_temp['Player1'].iloc[0]
+
+    # 1) Secuencias por rally y resultado del punto para Carolina
+    rallys = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
+        'Zone': lambda x: x.astype(str).str.strip().tolist(),
+        'Jugador del golpeo': lambda x: x.astype(str).str.strip().tolist(),
+        'Player 1 Score': 'max'
+    }).reset_index()
+
+    rallys['Score_Previo'] = rallys.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
+    rallys['Gana_P1'] = rallys['Player 1 Score'] > rallys['Score_Previo']
+
+    # 2) Construcción de transiciones entre patrones y hacia estados absorbentes
+    transiciones = []
+    visitas_patron = []
+
+    for _, fila in rallys.iterrows():
+        zonas = fila['Zone']
+        jugadoras = fila['Jugador del golpeo']
+        gana_p1 = bool(fila['Gana_P1'])
+
+        if len(zonas) < 3:
+            continue
+
+        # Patrones de longitud 3 y jugadora que ejecuta el 3er golpe
+        patrones_carolina = []
+        for i in range(len(zonas) - 2):
+            patron = ' -> '.join(zonas[i:i + 3])
+            jugadora_tercer_golpe = jugadoras[i + 2]
+            if jugadora_tercer_golpe == nombre_carolina:
+                patrones_carolina.append(patron)
+
+        if len(patrones_carolina) == 0:
+            continue
+
+        visitas_patron.extend(patrones_carolina)
+
+        # Transiciones entre patrones consecutivos de Carolina dentro del mismo rally
+        for i in range(len(patrones_carolina) - 1):
+            transiciones.append((patrones_carolina[i], patrones_carolina[i + 1]))
+
+        # Transición absorbente desde el último patrón de Carolina del rally
+        estado_absorbente = 'GANA_PUNTO' if gana_p1 else 'PIERDE_PUNTO'
+        transiciones.append((patrones_carolina[-1], estado_absorbente))
+
+    # 3) Frecuencias de transiciones
+    trans_df = pd.DataFrame(transiciones, columns=['origen', 'destino'])
+    conteo_trans = trans_df.groupby(['origen', 'destino']).size().reset_index(name='Frecuencia')
+
+    estados_transitorios = sorted(set(conteo_trans['origen']))
+    estados_absorbentes = ['GANA_PUNTO', 'PIERDE_PUNTO']
+    estados_transitorios = [e for e in estados_transitorios if e not in estados_absorbentes]
+    estados = estados_transitorios + estados_absorbentes
+
+    # 4) Matriz de conteos y normalización a probabilidades
+    matriz_conteo = pd.DataFrame(0.0, index=estados, columns=estados)
+    for _, r in conteo_trans.iterrows():
+        matriz_conteo.loc[r['origen'], r['destino']] = r['Frecuencia']
+
+    for ea in estados_absorbentes:
+        matriz_conteo.loc[ea, ea] = 1.0
+
+    suma_filas = matriz_conteo.sum(axis=1)
+    matriz_P = matriz_conteo.div(suma_filas.replace(0, np.nan), axis=0).fillna(0)
+
+    # 5) Forma canónica absorbente
+    t = len(estados_transitorios)
+    Q = matriz_P.iloc[:t, :t].values
+    R = matriz_P.iloc[:t, t:].values
+
+    I = np.eye(t)
+    N = np.linalg.inv(I - Q)
+    B = N @ R
+
+    prob_abs = pd.DataFrame(
+        B,
+        index=estados_transitorios,
+        columns=['Prob_Ganar', 'Prob_Perder']
+    ).reset_index().rename(columns={'index': 'Patrón'})
+
+    # Frecuencia de visitas por patrón para filtrar ruido
+    visitas_df = pd.Series(visitas_patron).value_counts().reset_index()
+    visitas_df.columns = ['Patrón', 'Visitas']
+    prob_abs = prob_abs.merge(visitas_df, on='Patrón', how='left').fillna({'Visitas': 0})
+    prob_abs['Visitas'] = prob_abs['Visitas'].astype(int)
+
+    return {
+        'P': matriz_P,
+        'Q': Q,
+        'R': R,
+        'N': N,
+        'B': B,
+        'prob_abs': prob_abs,
+        'estados_transitorios': estados_transitorios,
+        'estados_absorbentes': estados_absorbentes
+    }
+
+
+modelo_markov = construir_modelo_markov_patrones(datos_badminton)
+
+print('--- Dimensiones del modelo ---')
+print(f"Estados transitorios: {len(modelo_markov['estados_transitorios'])}")
+print(f"Estados absorbentes: {len(modelo_markov['estados_absorbentes'])}")
+print(f"Matriz P: {modelo_markov['P'].shape[0]} x {modelo_markov['P'].shape[1]}")
+
+print('\n--- Submatriz de transición (primeros 10 estados) ---')
+idx_filas = list(modelo_markov['P'].index[:4]) + list(modelo_markov['P'].index[-4:])
+idx_cols = list(modelo_markov['P'].columns[:4]) + list(modelo_markov['P'].columns[-4:])
+submatriz_resumen = modelo_markov['P'].loc[idx_filas, idx_cols]
+print('\n--- Submatriz de transición (4 primeros y 4 últimos estados) ---')
+show(submatriz_resumen.round(3))
+```
 
 # Probabilidad de ganar el punto para cada patrón
 
-Escribir aquí
+Con la matriz $B=N\,R$ se obtiene directamente la probabilidad de absorción en `GANA_PUNTO` o `PIERDE_PUNTO` desde cada patrón de longitud 3.
+
+```{python}
+resultado_markov = modelo_markov['prob_abs'].copy()
+
+# Filtro de soporte mínimo para evitar patrones extremadamente raros
+resultado_filtrado = resultado_markov[resultado_markov['Visitas'] >= 5].copy()
+
+top_ganar = resultado_filtrado.sort_values(['Prob_Ganar', 'Visitas'], ascending=[False, False]).head(10)
+top_perder = resultado_filtrado.sort_values(['Prob_Perder', 'Visitas'], ascending=[False, False]).head(10)
+
+print('--- Patrones con mayor probabilidad de GANAR (Carolina) ---')
+show(top_ganar[['Patrón', 'Visitas', 'Prob_Ganar', 'Prob_Perder']].round(4))
+
+print('--- Patrones con mayor probabilidad de PERDER (Carolina) ---')
+show(top_perder[['Patrón', 'Visitas', 'Prob_Ganar', 'Prob_Perder']].round(4))
+```
+
+```{python}
+# Gráfica 1: Top patrones con mayor probabilidad de ganar
+datos_plot_ganar = top_ganar.sort_values('Prob_Ganar', ascending=True)
+
+plt.figure(figsize=(10, 5.5))
+plt.barh(datos_plot_ganar['Patrón'], datos_plot_ganar['Prob_Ganar'], color='#1f77b4')
+plt.xlabel('Probabilidad de ganar el punto')
+plt.ylabel('Patrón de longitud 3')
+plt.title('Patrones con mayor probabilidad de ganar (Carolina)')
+plt.xlim(0, 1)
+plt.grid(axis='x', linestyle='--', alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Gráfica 2: Top patrones con mayor probabilidad de perder
+datos_plot_perder = top_perder.sort_values('Prob_Perder', ascending=True)
+
+plt.figure(figsize=(10, 5.5))
+plt.barh(datos_plot_perder['Patrón'], datos_plot_perder['Prob_Perder'], color='#d62728')
+plt.xlabel('Probabilidad de perder el punto')
+plt.ylabel('Patrón de longitud 3')
+plt.title('Patrones con mayor probabilidad de perder (Carolina)')
+plt.xlim(0, 1)
+plt.grid(axis='x', linestyle='--', alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
