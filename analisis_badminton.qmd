@@ -16,8 +16,6 @@ number-sections: true
 lang: es
 ---
 
-# Importación de librerías y funciones necesarias.
-
 ```{python}
 #| echo: false
 # Importación de librerías
@@ -1347,7 +1345,7 @@ El sistema se compone de un conjunto discreto de **estados** que representan tod
 
 - **Estados transitorios:** Son las secuencias de zonas de golpeo que pueden ocurrir durante el desarrollo del punto. En total, puede haber hasta 12**3 = 1728 secuencias posibles de longitud 3 (considerando las 12 zonas del campo). Estos estados representan las diferentes combinaciones de golpes que pueden ocurrir antes de que el punto termine.
 
-- **Estados absorbentes:** Son eventos terminales donde la cadena se detiene. En este caso son dos: **Win** (punto ganado) y **Lose** (punto perdido). Matemáticamente, una vez se entra en un estado absorbente, la probabilidad de salir de él es 0 (su probabilidad de transición hacia sí mismo es 1).
+- **Estados absorbentes:** Son eventos terminales donde la cadena se detiene. En este caso son dos: **Win** (punto ganado) y **Loose** (punto perdido). Matemáticamente, una vez se entra en un estado absorbente, la probabilidad de salir de él es 0 (su probabilidad de transición hacia sí mismo es 1).
 
 ### 2. Matriz de Transiciones y Probabilidades
 El núcleo de la cadena de Markov es su **Matriz de Transición**, que agrupa las probabilidades de pasar de cualquier estado a cualquier otro.
@@ -1650,4 +1648,24 @@ def visualizar_graficos_separados_simple(df_ataque, df_defensa, top_n=10):
 visualizar_graficos_separados_simple(carolina_refinada, contrarios_refinada, top_n=10)
 ```
 
-(Nota) La probabilidad de ganar es siempre de Carolina, entonces sólo hay que interpretar los patrones de ataque y defensa con la porbabilidad de win. Si hay un patrón de ataque con probabilidad de victoria alta, es un patrón que Carolina ejecuta bien y que le da muchas probabilidades de ganar el punto. Si hay un patrón de defensa con probabilidad de victoria alta, es un patrón de defensa de Carolina que le sale muy bien para darle la vuelta al punto. 
+*Nota*. La probabilidad de ganar es siempre de Carolina. Por ello, sólo se precisa interpretar los patrones de ataque y defensa con la probabilidad de **Win**. En un patrón de ataque con probabilidad de victoria alta la ejecución de Carolina es buena y tiene mayor probabilidad de ganar el punto. En un patrón de defensa con probabilidad de victoria alta, la ejecución de Carolina es buena para darle la vuelta al punto. 
+
+# Conclusiones
+
+Considerando la nota anterior resumiendo la interpretación de la matriz de transición, se obtienen las siguientes conclusiones:
+
+- Cuando Carolina es la **atacante**, es decir, es la primera que golpea el volante en la secuencia, el patrón que más probabilidades le da de ganar el punto es el 8-4-2.
+
+- El patrón que menos probabilidad le da es el 7-8-12.
+
+Es llamativo el *Score Táctico* de estos dos patrones que están en los extremos opuestos de la gráfica. Dicho score se ha calculado multiplicando la probabilidad y la frecuencia. El patrón que menor probabilidad le da aparece de forma más repetida que el de mayor probabilidad, lo que hace que su resultado sea mayor.
+
+El patrón con el mejor score es el 9-8-1, ya que, además de tener una probabilidad de victoria alta, aparece con una frecuencia superior a los demás.
+
+Una recomendación deportiva sería conseguir realizar con mayor frecuencia el patrón de mayor probabilidad, aumentando su *Score Táctico*.
+
+Cuando es la rival la que inicia la secuencia y Carolina está en **defensa**, los patrones que mayor y menor probabilidad de ganar el punto le dan a la jugadora española son, respectivamente, el 1-9-5 y el 5-1-8. El patrón con mayor *Score Táctico* es el 12-1-1. 
+
+Al igual que en el ataque, lo ideal sería aumentar el score del patrón 1-9-5.
+
+A partir del estudio de la secuencias de las zonas de golpeo, con sus respectivas probabilidades de ganar un punto, se puede apoyar el entrenamiento de la estrategia de juego de bádminton para favorecer el rendimiento de las jugadoras y la espectacularidad del deporte.
