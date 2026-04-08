@@ -32,6 +32,7 @@ import seaborn as sns
 from itables import show
 import plotly.graph_objects as go
 from matplotlib.colors import Normalize
+import math
 
 ```
 
@@ -400,7 +401,7 @@ Antes de comenzar con el análisis, es importante conocer el significado de cada
 : Diccionario de variables del dataset {#tbl-diccionario-datos}
 
 
-Tras conocer el significado de cada una de las variables, vamos a hacer un análisis básico de comprobación de calidad y reconocimiento de los datos. 
+Tras conocer el significado de cada una de las variables, vamos a hacer un análisis básico de comprobación de calidad. 
 
 ```{python}
 # 1. Primeras filas
@@ -411,7 +412,6 @@ print(datos_badminton.head())
 print("\n--- Estructura y Nulos ---")
 resumen_columnas = pd.DataFrame({
     'Columna': datos_badminton.columns,
-    'Tipo': datos_badminton.dtypes.values,
     'Nulos': datos_badminton.isnull().sum().values
 })
 print(resumen_columnas)
@@ -1046,324 +1046,608 @@ print(frecuencia_longitudes_rallies_partido.head(10).to_string(index=False))
 
 Una vez analizadas algunas estadísticas sobre los golpes y las secuencias, se da un paso más para conocer cuáles son los patrones de longitud 3 (secuencias de 3 golpes) más frecuentes en los partidos.
 
-## Patrones de longitud 3 más frecuentes
-
-El primer paso es extraer las secuencias de longitud 3 más frecuentes en todos los partidos y en cada partido. Con esto, se obtiene una visión general de los patrones de golpeo más habituales.
 
 ```{python}
-def extraer_patrones_longitud_3(df):
+def analizar_secuencias_completas(df, mapa_nombres=None):
+    """
+    Agrupa los datos por rally, devuelve las secuencias de zonas como arrays 
+    y asigna los nombres reales de las jugadoras.
+    """
+    # Diccionario por defecto por si no se proporcionan nombres
+    if mapa_nombres is None:
+        mapa_nombres = {'Jugadora 1': 'Jugadora 1', 'Jugadora 2': 'Jugadora 2'}
+        
     df_temp = df.copy()
-    df_temp = df_temp.sort_values(['Match', 'Set', 'Rally', 'Stroke'])
     
-    # 1. Agrupar los golpes en cada rally manteniendo el orden temporal
-    puntos_por_rally = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
-        'Zone': lambda x: x.astype(str).str.strip().tolist(),
-        'Stroke': 'max'
-    }).reset_index()
-
-    # 2. Extraer todas las ventanas deslizantes de 3 golpes dentro de cada rally
-    def extraer_ventanas_3(zonas):
-        if len(zonas) < 3:
-            return []
-        return [' -> '.join(zonas[i:i + 3]) for i in range(len(zonas) - 2)]
-
-    puntos_por_rally['Patrón_3'] = puntos_por_rally['Zone'].apply(extraer_ventanas_3)
-    puntos_por_rally = puntos_por_rally.explode('Patrón_3').dropna(subset=['Patrón_3'])
-
-    # 3. Contar la frecuencia de cada patrón de longitud 3
-    frecuencia_patrones = puntos_por_rally['Patrón_3'].value_counts().reset_index()
-    frecuencia_patrones.columns = ['Patrón de Longitud 3', 'Frecuencia']
+    # 1. Limpieza básica
+    df_temp['Zone'] = df_temp['Zone'].astype(str).str.strip()
     
-    return frecuencia_patrones
+    # 2. Agrupación unificada (Todo en un solo paso)
+    rallies = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg(
+        Inicia_Rally=('Jugador del golpeo', 'first'),
+        Secuencia_Zonas=('Zone', list),         # <--- Convierte la secuencia en un array (lista)
+        Numero_Golpes=('Stroke', 'max'),
+        Player_1_Score=('Player 1 Score', 'max')
+    ).reset_index()
+    
+    # 3. Calcular si el punto fue para la Jugadora 1
+    rallies['Score_Previo'] = rallies.groupby(['Match', 'Set'])['Player_1_Score'].shift(1).fillna(0)
+    rallies['Gana_Punto_J1'] = rallies['Player_1_Score'] > rallies['Score_Previo']
+    
+    # 4. Asignar nombres reales
+    # Determinar ganadora del punto
+    rallies['Ganadora del Punto'] = np.where(
+        rallies['Gana_Punto_J1'], 
+        mapa_nombres.get('Jugadora 1', 'Jugadora 1'), 
+        mapa_nombres.get('Jugadora 2', 'Jugadora 2')
+    )
+    
+    # Mapear quién inicia el rally (sacadora) a su nombre real.
+    # Asume que 'Jugador del golpeo' tiene valores que coinciden con las claves del diccionario.
+    rallies['Inicia el Rally'] = rallies['Inicia_Rally'].map(mapa_nombres).fillna(rallies['Inicia_Rally'])
 
-frecuencia_patrones_longitud_3 = extraer_patrones_longitud_3(datos_badminton)
+    # 5. Seleccionar y renombrar columnas finales
+    columnas_finales = [
+        'Match', 'Set', 'Rally', 'Inicia el Rally', 
+        'Numero_Golpes', 'Secuencia_Zonas', 'Ganadora del Punto'
+    ]
+    
+    resultado = rallies[columnas_finales].copy()
+    resultado.columns = [
+        'Partido', 'Set', 'Rally', 'Inicia el Rally', 
+        'Número de Golpes', 'Secuencia de Zonas', 'Ganadora del Punto'
+    ]
+    
+    return resultado
 
-print("--- Patrones de longitud 3 más frecuentes en todos los rallies ---")
-print(frecuencia_patrones_longitud_3.head(10))
+
+# Ejecución
+resultados = analizar_secuencias_completas(datos_badminton)
+show(resultados)
 ```
 
-## Comparación de patrones de longitud 3 entre Carolina Marín y sus rivales
-
-A continuación se comparan los patrones de longitud 3 más frecuentes entre Carolina Marín y sus rivales usando todos los rallies.
-
-En la siguiente gráfica se muestran los patrones de longitud 3 más frecuentes para Carolina Marín y para sus rivales en todos los rallies. Se pueden observar cuáles son los patrones más habituales para cada jugadora y comparar su frecuencia.
-
+Una vez tenemos las secuencias de cada rally, vamos a extraer los patrones de longitud 3 y los asignaremos a cada jugadora si es ella la que inicia dicha secuencia en el rally. De esta forma, podremos conocer cuáles son los patrones de longitud 3 más frecuentes para Carolina Marín y para sus rivales.
 
 ```{python}
-def extraer_patrones_todos_desglose_jugadora(df):
-    df_temp = df.copy().sort_values(['Match', 'Set', 'Rally', 'Stroke'])
-    nombre_carolina = df_temp['Player1'].iloc[0]
-
-    puntos_por_rally = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
-        'Zone': lambda x: x.astype(str).str.strip().tolist(),
-        'Jugador del golpeo': lambda x: x.astype(str).str.strip().tolist()
-    }).reset_index()
-
+def analizar_patrones_frecuencia(df):
     registros = []
-    for _, fila in puntos_por_rally.iterrows():
-        zonas = fila['Zone']
-        jugadoras = fila['Jugador del golpeo']
+    
+    for _, row in df.iterrows():
+        partido = str(row['Partido'])
+        inicia_rally = str(row['Inicia el Rally']).strip()
+        secuencia = row['Secuencia de Zonas']
+        
+        # 1. Extraer los nombres de las jugadoras desde la columna 'Partido'
+        # Asumimos que están separadas por un guion (ej: "Carolina Marin-Li Xuerui")
+        jugadoras = [j.strip() for j in partido.split('-')]
+        
+        # Detectar quién es la rival en este rally
+        if inicia_rally in jugadoras:
+            otra_jugadora = [j for j in jugadoras if j != inicia_rally][0]
+        else:
+            # Fallback de seguridad por si los nombres no coinciden exactamente
+            otra_jugadora = "Rival" 
+            
+        # 2. Limpiar la secuencia eliminando 'Out' y 'Red'
+        # (Convertimos a minúsculas para que lo detecte independientemente de cómo esté escrito)
+        sec_limpia = [zona for zona in secuencia if str(zona).strip().lower() not in ['out', 'red']]
+        
+        # 3. Aplicar la ventana móvil de tamaño 3
+        for i in range(len(sec_limpia) - 2):
+            patron = sec_limpia[i:i+3]
+            
+            # Lógica de turnos alternos:
+            # - Índices pares (0, 2, 4...): El golpe lo inicia quien empezó el rally.
+            # - Índices impares (1, 3, 5...): El golpe lo inicia la rival.
+            if i % 2 == 0:
+                jugadora_inicia_patron = inicia_rally
+            else:
+                jugadora_inicia_patron = otra_jugadora
+                
+            # Formateamos el patrón como string para poder agruparlo después
+            patron_str = f"[{patron[0]}, {patron[1]}, {patron[2]}]"
+            
+            registros.append({
+                'Jugadora': jugadora_inicia_patron,
+                'Patrón': patron_str
+            })
+            
+    # 4. Crear DataFrame con todos los registros
+    df_patrones = pd.DataFrame(registros)
+    
+    # 5. Agrupar por Jugadora y Patrón para obtener la frecuencia
+    if not df_patrones.empty:
+        tabla_frecuencias = df_patrones.groupby(['Jugadora', 'Patrón']).size().reset_index(name='Frecuencia')
+        
+        # Ordenar para ver primero a cada jugadora y sus patrones más repetidos
+        tabla_frecuencias = tabla_frecuencias.sort_values(
+            by=['Jugadora', 'Frecuencia'], 
+            ascending=[True, False]
+        ).reset_index(drop=True)
+        
+        return tabla_frecuencias
+    else:
+        # Por si pasamos un DataFrame vacío
+        return pd.DataFrame(columns=['Jugadora', 'Patrón', 'Frecuencia'])
 
-        if len(zonas) < 3:
-            continue
-
-        for i in range(len(zonas) - 2):
-            patron = ' -> '.join(zonas[i:i + 3])
-            jugadora_patron = jugadoras[i + 2]
-            registros.append({'Jugadora': jugadora_patron, 'Patrón de Longitud 3': patron})
-
-    patrones_df = pd.DataFrame(registros)
-    frecuencia = patrones_df.groupby(['Jugadora', 'Patrón de Longitud 3']).size().reset_index(name='Frecuencia')
-    return frecuencia, nombre_carolina
+# Ejecución:
+tabla_patrones = analizar_patrones_frecuencia(resultados)
+```
 
 
-frecuencia_todos_jugadoras, nombre_carolina = extraer_patrones_todos_desglose_jugadora(datos_badminton)
 
-# Tabla top 5 por jugadora (Carolina + hasta 8 rivales con mayor frecuencia total)
-top_rivales_todos_j = (
-    frecuencia_todos_jugadoras[frecuencia_todos_jugadoras['Jugadora'] != nombre_carolina]
-    .groupby('Jugadora', as_index=False)['Frecuencia'].sum()
-    .sort_values('Frecuencia', ascending=False)
-)
-jugadoras_plot_todos = [nombre_carolina] + top_rivales_todos_j['Jugadora'].head(8).tolist()
+Tenemos actualmente en la variable `tabla_patrones` una tabla con la frecuencia de cada patrón de longitud 3 para cada jugadora. A continuación analizamos: 
 
-tabla_top_todos = []
-for jugadora in jugadoras_plot_todos:
-    top_j = frecuencia_todos_jugadoras[frecuencia_todos_jugadoras['Jugadora'] == jugadora].nlargest(5, 'Frecuencia').copy()
-    top_j['Ranking'] = range(1, len(top_j) + 1)
-    tabla_top_todos.append(top_j[['Jugadora', 'Ranking', 'Patrón de Longitud 3', 'Frecuencia']])
+- Patrones de longitud 3 más frecuentes en todos los rallies (sin diferenciar por jugadora).
+- Patrones de longitud 3 más frecuentes para Carolina Marín y para sus rivales, comparándolos entre sí.
 
-tabla_top_todos = pd.concat(tabla_top_todos, ignore_index=True)
-print('--- Tabla de patrones (todos los rallies) desglosada por jugadora ---')
-show(tabla_top_todos)
 
-# Gráficas pequeñas 3x3 (todos los rallies, desglosado por jugadora)
-fig, axes = plt.subplots(3, 3, figsize=(12, 10), constrained_layout=True)
-axes = axes.flatten()
 
-for idx, jugadora in enumerate(jugadoras_plot_todos[:9]):
-    ax = axes[idx]
-    datos_j = frecuencia_todos_jugadoras[frecuencia_todos_jugadoras['Jugadora'] == jugadora].nlargest(5, 'Frecuencia').copy()
+## Patrones de longitud 3 más frecuentes
 
-    if datos_j.empty:
-        ax.axis('off')
-        continue
+```{python}
+# Patrones de longitud 3 más frecuentes en todos los rallies (sin diferenciar por jugadora)
 
-    datos_j = datos_j.sort_values('Frecuencia', ascending=True)
-    color = '#1f77b4' if jugadora == nombre_carolina else '#d62728'
+tabla_patrones_todos = tabla_patrones.groupby('Patrón')['Frecuencia'].sum().reset_index().sort_values(by='Frecuencia', ascending=False)
 
-    ax.barh(datos_j['Patrón de Longitud 3'], datos_j['Frecuencia'], color=color)
-    ax.set_title(jugadora, fontsize=9)
-    ax.tick_params(axis='y', labelsize=7)
-    ax.tick_params(axis='x', labelsize=7)
-    ax.grid(axis='x', linestyle='--', alpha=0.25)
+print("--- Patrones de longitud 3 más frecuentes en todos los rallies ---")
+show(tabla_patrones_todos)
+tabla_ordenada = tabla_patrones_todos.sort_values('Frecuencia', ascending=False).reset_index(drop=True)
+rankings = np.arange(1, len(tabla_ordenada) + 1)
 
-for idx in range(len(jugadoras_plot_todos[:9]), 9):
-    axes[idx].axis('off')
+sns.set_theme(style="whitegrid")
+plt.figure(figsize=(12, 6))
 
-fig.suptitle('Patrones de longitud 3 (todos los rallies) desglosados por jugadora', fontsize=12)
+# Dibujamos una línea continua y rellenamos el área por debajo
+plt.plot(rankings, tabla_ordenada['Frecuencia'], color='#d62728', linewidth=2)
+plt.fill_between(rankings, tabla_ordenada['Frecuencia'], color='#d62728', alpha=0.3)
+
+plt.xlabel('Ránking del Patrón', fontsize=12, labelpad=10)
+plt.ylabel('Frecuencia Total', fontsize=12, labelpad=10)
+plt.title('Curva de Frecuencia de Patrones (Larga Cola)', fontsize=14, pad=15)
+
+# Opcional: Si tienes 5000 patrones y los últimos 4500 ocurren solo 1 vez, 
+# puedes descomentar la siguiente línea para hacer "zoom" en el top 100:
+# plt.xlim(0, 100) 
+
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.grid(axis='x', visible=False)
+sns.despine()
+
+plt.tight_layout()
 plt.show()
 ```
 
+Podemos observar cómo hay pocos patrones que se repiten muchas veces y muchos patrones que se repiten pocas veces.
+
+## Comparación de patrones de longitud 3 entre Carolina Marín y sus rivales
+
+A continuación, vamos a mostrar una tabla de los 10 patrones de longitud 3 más frecuentes para Carolina Marín y para cada una de sus rivales. Lo normalizaremos sobre el total de patrones de cada jugadora para poder comparar entre ellas, y se ordenará por frecuencia para cada jugadora.
+
+
+```{python}
+def graficar_top5_patrones_normalizados(tabla_patrones):
+    # ==========================================
+    # 1. PREPARACIÓN DE DATOS
+    # ==========================================
+    # Calcular el total de patrones por jugadora
+    totales = tabla_patrones.groupby('Jugadora')['Frecuencia'].sum().reset_index(name='Total')
+    
+    # Unir el total a la tabla original y calcular el porcentaje
+    df_calc = pd.merge(tabla_patrones, totales, on='Jugadora')
+    df_calc['Porcentaje'] = (df_calc['Frecuencia'] / df_calc['Total']) * 100
+    
+    # Ordenar por jugadora y porcentaje descendente, y quedarnos con el Top 5
+    top5_df = (df_calc.sort_values(by=['Jugadora', 'Porcentaje'], ascending=[True, False])
+                      .groupby('Jugadora')
+                      .head(5)
+                      .reset_index(drop=True))
+
+    # ==========================================
+    # 2. CONFIGURACIÓN VISUAL (ESTILO PROFESIONAL)
+    # ==========================================
+    sns.set_theme(style="white") # Fondo limpio sin cuadrículas pesadas
+    
+    jugadoras = top5_df['Jugadora'].unique()
+    n_jugadoras = len(jugadoras)
+    
+    # Calcular disposición del panel (2 columnas, las filas necesarias)
+    cols = 2
+    rows = math.ceil(n_jugadoras / cols)
+    
+    # Crear la figura
+    fig, axes = plt.subplots(rows, cols, figsize=(14, 4 * rows))
+    
+    # Si solo hay 1 o 2 jugadoras, axes no es un array 2D, así que lo aplanamos de forma segura
+    if n_jugadoras == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    # Iterar sobre cada jugadora y crear su subgráfico
+    for i, jugadora in enumerate(jugadoras):
+        ax = axes[i]
+        datos = top5_df[top5_df['Jugadora'] == jugadora]
+        
+        # Lógica de colores: Destacar a Carolina Marín (ej. rojo oscuro) y rivales en gris/azul
+        # Cambia 'Carolina Marin' por la forma exacta en la que esté escrito en tu tabla
+        es_carolina = 'Carolina Marin' in jugadora 
+        color_barras = '#b22222' if es_carolina else '#4a6984'
+        
+        # Crear gráfico de barras horizontales
+        sns.barplot(
+            data=datos, 
+            x='Porcentaje', 
+            y='Patrón', 
+            ax=ax, 
+            color=color_barras,
+            edgecolor='none'
+        )
+        
+        # Añadir las etiquetas de datos (los porcentajes) a la derecha de cada barra
+        for p in ax.patches:
+            width = p.get_width()
+            ax.annotate(f'{width:.1f}%',
+                        (width, p.get_y() + p.get_height() / 2.),
+                        ha='left', va='center',
+                        xytext=(5, 0), textcoords='offset points',
+                        fontsize=11, color='#333333')
+            
+        # Limpiar y formatear ejes
+        ax.set_title(jugadora, fontsize=14, fontweight='bold', pad=15, loc='left')
+        ax.set_xlabel('Frecuencia Relativa (%)' if i >= (rows-1)*cols else '', fontsize=10) # Solo poner etiqueta X abajo
+        ax.set_ylabel('') # Quitamos la palabra "Patrón" para no ensuciar
+        
+        # Ampliar un poco el límite X para que quepa el texto del porcentaje
+        max_val = datos['Porcentaje'].max()
+        ax.set_xlim(0, max_val * 1.25)
+        
+        # Quitar los bordes de la caja del gráfico
+        sns.despine(ax=ax, left=True, bottom=True)
+        # Quitar las marcas del eje X (los números de abajo) para dejar solo las etiquetas directas
+        ax.set_xticks([]) 
+
+    # Ocultar los subgráficos vacíos si el número de jugadoras es impar
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    # Título general del dashboard
+    plt.suptitle('Top 5 Patrones de Juego Más Frecuentes por Jugadora', 
+                 fontsize=18, fontweight='heavy', y=1.02)
+
+    plt.tight_layout()
+    plt.show()
+
+# Ejecución:
+graficar_top5_patrones_normalizados(tabla_patrones)
+```
+
 En el siguiente apartado, mediante cadenas de Markov, se analizará la probabilidad de ganar un punto a partir de los patrones de golpeo. Para ello, se construirá una matriz de transición entre las zonas de golpeo y se calculará la probabilidad de ganar el punto para cada patrón. Con ello se podrá conocer cuáles son los patrones de golpeo que más probabilidades tienen de llevar a la consecución del punto para Carolina Marín.
+
+
+
+
+
+
+
+
 
 # Cadenas de Markov para analizar la probabilidad de ganar un punto a partir de los patrones de golpeo
 
 En este último apartado, se construirá una matriz de transición entre las zonas de golpeo y se calculará la probabilidad de ganar el punto para cada patrón. Con ello se podrá conocer cuáles son los patrones de golpeo que más probabilidades tienen de llevar a la consecución de ganar un punto.
 
-# Cadenas de Markov
+## Cadenas de Markov
 
-Una cadena de Markov es un modelo matemático que describe un sistema que cambia de estado de manera probabilística. En este contexto, cada "estado" representa un patrón (secuencia de 3 golpes) y las transiciones entre estados representan la probabilidad de pasar de un patrón a otro en el siguiente golpe. Los pasos para implementar una cadena de Markov en este análisis son:
+Una **cadena de Markov** es un modelo matemático que describe una secuencia de eventos donde la probabilidad de que ocurra un evento depende **únicamente del estado inmediatamente anterior** (y no de toda la historia previa). Esta propiedad la hace ideal para modelar transiciones espaciales en deportes.
 
-1. **Definir los estados**: Cada patrón de longitud 3 se considerará un estado en la cadena de Markov. Que el punto se termine ganando o perdiendo se considerará un **estado absorbente**, es decir, un estado que una vez alcanzado no se sale de él.
-2. **Construir la matriz de transición**: Se calculará la frecuencia con la que se pasa de un patrón a otro en los rallies, lo que permitirá construir una matriz de transición que refleje estas probabilidades.
+En este contexto, el problema se modela específicamente como una **Cadena de Markov con estados absorbentes**.
 
-## Construcción de la matriz de transición 
+### 1. Espacio de Estados
+El sistema se compone de un conjunto discreto de **estados** que representan todas las secuencias posibles que se pueden dar en un partido/partidos de bádminton. Se dividen en dos categorías:
 
-Para construir la matriz de transición se sigue el siguiente procedimiento técnico:
+- **Estados transitorios:** Son las secuencias de zonas de golpeo que pueden ocurrir durante el desarrollo del punto. En total, puede haber hasta 12**3 = 1728 secuencias posibles de longitud 3 (considerando las 12 zonas del campo). Estos estados representan las diferentes combinaciones de golpes que pueden ocurrir antes de que el punto termine.
 
-1. Se transforma cada rally en una secuencia de estados, donde cada estado es un patrón de 3 zonas consecutivas.
-2. Se filtran solo los patrones cuyo tercer golpe lo ejecuta Carolina Marín.
-3. Se cuentan transiciones entre esos patrones consecutivos de Carolina dentro del rally.
-4. Desde el último patrón de Carolina en cada rally se añade una transición al estado absorbente `GANA_PUNTO` o `PIERDE_PUNTO` (desde la perspectiva de Carolina).
-5. Se normalizan filas para obtener probabilidades de transición y construir la matriz $P$.
-6. Se reordena $P$ en forma canónica para cadenas absorbentes:
+- **Estados absorbentes:** Son eventos terminales donde la cadena se detiene. En este caso son dos: **Win** (punto ganado) y **Lose** (punto perdido). Matemáticamente, una vez se entra en un estado absorbente, la probabilidad de salir de él es 0 (su probabilidad de transición hacia sí mismo es 1).
 
-$$
-P = \begin{pmatrix}
-Q & R \\
-0 & I
-\end{pmatrix}
-$$
+### 2. Matriz de Transiciones y Probabilidades
+El núcleo de la cadena de Markov es su **Matriz de Transición**, que agrupa las probabilidades de pasar de cualquier estado a cualquier otro.
 
-7. Se calcula la matriz fundamental $N=(I-Q)^{-1}$ y la matriz de absorción:
+Si denotamos como $n_{i,j}$ el número empírico de veces que se pasa de una cadena $j$ (origen) y llegó a la cadena $i$ (destino), la probabilidad de transición $P$ en un solo paso se define normalizando las columnas de frecuencias empíricas:
 
 $$
-B = N\,R
+P(\text{destino}=i \mid \text{origen}=j) = \frac{n_{i,j}}{\sum_{k} n_{k,j}}
 $$
 
-donde cada fila de $B$ devuelve la probabilidad de acabar en `GANA_PUNTO` o `PIERDE_PUNTO` partiendo de un patrón concreto.
+Estructuralmente, la matriz de transición de este sistema toma la siguiente forma canónica:
+
+$$
+P = \begin{bmatrix}
+ p_{1,1} & p_{1,2} & \cdots & p_{1,n} & 0 & 0 \\
+ p_{2,1} & p_{2,2} & \cdots & p_{2,n} & 0 & 0 \\
+ \vdots & \vdots & \ddots & \vdots & \vdots & \vdots \\
+ p_{n,1} & p_{n,2} & \cdots & p_{n,n} & 0 & 0 \\
+ p_{\text{lose},1} & p_{\text{lose},2} & \cdots & p_{\text{lose},n} & 1 & 0 \\
+ p_{\text{win},1} & p_{\text{win},2} & \cdots & p_{\text{win},n} & 0 & 1
+\end{bmatrix}
+$$
+
+*Nota: La suma de cualquier columna en esta matriz es siempre igual a 1.*
+
+### 3. Evolución del Sistema y Cálculo del Valor Esperado
+La matriz $P$ original refleja las probabilidades de transición en **un solo paso** (una acción o pase). Sin embargo, para evaluar cuán valiosa es una zona, necesitamos saber la probabilidad de terminar en un estado absorbente (Win) tras múltiples pases.
+
+Existe una propiedad matemática fundamental en las matrices de Markov: **multiplicar la matriz por sí misma nos da las probabilidades de transición en los siguientes pasos**, conservando siempre la estructura de estados absorbentes. 
+
+Para dos pasos, la probabilidad viene dada por $P^2$, donde cada celda cumple:
+$$
+p^{2}_{i,j} = \mathbb{P}(X_{n+2} = i \mid X_n = j)
+$$
+
+**La convergencia:** El cálculo del valor de cada secuencia de golpeos a largo plazo consiste en iterar la matriz (multiplicándola por sí misma repetidamente $P \times P \dots P$) hasta alcanzar la **convergencia**. En el infinito matemático, la probabilidad de mantenerse en los estados transitorios tiende a $0$, y todas las probabilidades se acumulan en las filas de los **estados absorbentes**.
+
+Al finalizar esta iteración, la fila correspondiente al estado **Win** nos dará exactamente el valor teórico esperado: la probabilidad de ganar el punto partiendo si estamos en una secuencia de golpeos concreta.
+
+
+
+## Construcción de la matriz de transición
+
+Vamos a construir la matriz de transición de la siguiente forma:
+
+1. Recorremos cada rally y extraemos las secuencias de zonas de golpeo.
+2. Para cada secuencia, identificamos las transiciones entre secuencias de longitud 3 (ternas) y el resultado final del punto (Win o Lose).
+3. Construimos dos matrices de transición: una para las secuencias iniciadas por Carolina Marín (ataque) y otra para las secuencias iniciadas por sus rivales (defensa).
+
+Tras ello, normalizamos las matrices para obtener las probabilidades de transición y calculamos la probabilidad de ganar el punto para cada secuencia de golpeos.
 
 ```{python}
-def construir_modelo_markov_patrones(df):
-    df_temp = df.copy().sort_values(['Match', 'Set', 'Rally', 'Stroke'])
-    nombre_carolina = df_temp['Player1'].iloc[0]
+import pandas as pd
+import numpy as np
+import re
 
-    # 1) Secuencias por rally y resultado del punto para Carolina
-    rallys = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
-        'Zone': lambda x: x.astype(str).str.strip().tolist(),
-        'Jugador del golpeo': lambda x: x.astype(str).str.strip().tolist(),
-        'Player 1 Score': 'max'
-    }).reset_index()
+def calcular_matrices_markov(resultados):
+    """Esta función recibe un dataframe y devuelve las matrices de probabilidad de Markov"""
+    
+    transiciones_ataque = []  
+    transiciones_defensa = [] 
+    
+    for index, row in resultados.iterrows():
+        inicia = row['Inicia el Rally']
+        secuencia_raw = str(row['Secuencia de Zonas'])
+        ganadora = row['Ganadora del Punto']
+        
+        zonas = re.findall(r'\d+', secuencia_raw)
+        n = len(zonas)
+        
+        estado_final = 'Point_Win' if ganadora == 'Jugadora 1' else 'Point_Lose'
+        es_carolina_inicia = (inicia == 'Carolina Marin')
+        
+        idx_carolina = list(range(0 if es_carolina_inicia else 1, n - 2, 2))
+        idx_rival = list(range(1 if es_carolina_inicia else 0, n - 2, 2))
+        
+        if idx_carolina:
+            ternas_carolina = ["-".join(zonas[i:i+3]) for i in idx_carolina]
+            for i in range(len(ternas_carolina) - 1):
+                transiciones_ataque.append((ternas_carolina[i], ternas_carolina[i+1]))
+            transiciones_ataque.append((ternas_carolina[-1], estado_final))
+            
+        if idx_rival:
+            ternas_rival = ["-".join(zonas[i:i+3]) for i in idx_rival]
+            for i in range(len(ternas_rival) - 1):
+                transiciones_defensa.append((ternas_rival[i], ternas_rival[i+1]))
+            transiciones_defensa.append((ternas_rival[-1], estado_final))
 
-    rallys['Score_Previo'] = rallys.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
-    rallys['Gana_P1'] = rallys['Player 1 Score'] > rallys['Score_Previo']
+    def crear_matriz_probabilidad(transiciones):
+        if not transiciones:
+            return pd.DataFrame()
+            
+        df_trans = pd.DataFrame(transiciones, columns=['Origen', 'Destino'])
+        matriz_freq = pd.crosstab(df_trans['Origen'], df_trans['Destino'])
+        # 1. Sacamos todos los estados únicos (Orígenes + Destinos + Finales)
+        todos_estados = list(set(matriz_freq.index).union(set(matriz_freq.columns)).union(['Point_Win', 'Point_Lose']))
+        
+        # 2. Reindexamos para forzar que la matriz sea N x N (Cuadrada)
+        matriz_freq = matriz_freq.reindex(index=todos_estados, columns=todos_estados, fill_value=0)
+        # -----------------------------
+        
+        matriz_freq.loc['Point_Win', :] = 0
+        matriz_freq.loc['Point_Win', 'Point_Win'] = 1
+        matriz_freq.loc['Point_Lose', :] = 0
+        matriz_freq.loc['Point_Lose', 'Point_Lose'] = 1
+        
+        matriz_prob = matriz_freq.div(matriz_freq.sum(axis=1), axis=0).fillna(0)
+        return matriz_prob
 
-    # 2) Construcción de transiciones entre patrones y hacia estados absorbentes
-    transiciones = []
-    visitas_patron = []
-
-    for _, fila in rallys.iterrows():
-        zonas = fila['Zone']
-        jugadoras = fila['Jugador del golpeo']
-        gana_p1 = bool(fila['Gana_P1'])
-
-        if len(zonas) < 3:
-            continue
-
-        # Patrones de longitud 3 y jugadora que ejecuta el 3er golpe
-        patrones_carolina = []
-        for i in range(len(zonas) - 2):
-            patron = ' -> '.join(zonas[i:i + 3])
-            jugadora_tercer_golpe = jugadoras[i + 2]
-            if jugadora_tercer_golpe == nombre_carolina:
-                patrones_carolina.append(patron)
-
-        if len(patrones_carolina) == 0:
-            continue
-
-        visitas_patron.extend(patrones_carolina)
-
-        # Transiciones entre patrones consecutivos de Carolina dentro del mismo rally
-        for i in range(len(patrones_carolina) - 1):
-            transiciones.append((patrones_carolina[i], patrones_carolina[i + 1]))
-
-        # Transición absorbente desde el último patrón de Carolina del rally
-        estado_absorbente = 'GANA_PUNTO' if gana_p1 else 'PIERDE_PUNTO'
-        transiciones.append((patrones_carolina[-1], estado_absorbente))
-
-    # 3) Frecuencias de transiciones
-    trans_df = pd.DataFrame(transiciones, columns=['origen', 'destino'])
-    conteo_trans = trans_df.groupby(['origen', 'destino']).size().reset_index(name='Frecuencia')
-
-    estados_transitorios = sorted(set(conteo_trans['origen']))
-    estados_absorbentes = ['GANA_PUNTO', 'PIERDE_PUNTO']
-    estados_transitorios = [e for e in estados_transitorios if e not in estados_absorbentes]
-    estados = estados_transitorios + estados_absorbentes
-
-    # 4) Matriz de conteos y normalización a probabilidades
-    matriz_conteo = pd.DataFrame(0.0, index=estados, columns=estados)
-    for _, r in conteo_trans.iterrows():
-        matriz_conteo.loc[r['origen'], r['destino']] = r['Frecuencia']
-
-    for ea in estados_absorbentes:
-        matriz_conteo.loc[ea, ea] = 1.0
-
-    suma_filas = matriz_conteo.sum(axis=1)
-    matriz_P = matriz_conteo.div(suma_filas.replace(0, np.nan), axis=0).fillna(0)
-
-    # 5) Forma canónica absorbente
-    t = len(estados_transitorios)
-    Q = matriz_P.iloc[:t, :t].values
-    R = matriz_P.iloc[:t, t:].values
-
-    I = np.eye(t)
-    N = np.linalg.inv(I - Q)
-    B = N @ R
-
-    prob_abs = pd.DataFrame(
-        B,
-        index=estados_transitorios,
-        columns=['Prob_Ganar', 'Prob_Perder']
-    ).reset_index().rename(columns={'index': 'Patrón'})
-
-    # Frecuencia de visitas por patrón para filtrar ruido
-    visitas_df = pd.Series(visitas_patron).value_counts().reset_index()
-    visitas_df.columns = ['Patrón', 'Visitas']
-    prob_abs = prob_abs.merge(visitas_df, on='Patrón', how='left').fillna({'Visitas': 0})
-    prob_abs['Visitas'] = prob_abs['Visitas'].astype(int)
-
-    return {
-        'P': matriz_P,
-        'Q': Q,
-        'R': R,
-        'N': N,
-        'B': B,
-        'prob_abs': prob_abs,
-        'estados_transitorios': estados_transitorios,
-        'estados_absorbentes': estados_absorbentes
-    }
-
-
-modelo_markov = construir_modelo_markov_patrones(datos_badminton)
-
-print('--- Dimensiones del modelo ---')
-print(f"Estados transitorios: {len(modelo_markov['estados_transitorios'])}")
-print(f"Estados absorbentes: {len(modelo_markov['estados_absorbentes'])}")
-print(f"Matriz P: {modelo_markov['P'].shape[0]} x {modelo_markov['P'].shape[1]}")
-
-print('\n--- Submatriz de transición (primeros 10 estados) ---')
-idx_filas = list(modelo_markov['P'].index[:4]) + list(modelo_markov['P'].index[-4:])
-idx_cols = list(modelo_markov['P'].columns[:4]) + list(modelo_markov['P'].columns[-4:])
-submatriz_resumen = modelo_markov['P'].loc[idx_filas, idx_cols]
-print('\n--- Submatriz de transición (4 primeros y 4 últimos estados) ---')
-show(submatriz_resumen.round(3))
+    matriz_ataque = crear_matriz_probabilidad(transiciones_ataque)
+    matriz_defensa = crear_matriz_probabilidad(transiciones_defensa)
+    
+    return matriz_ataque, matriz_defensa
 ```
 
-# Probabilidad de ganar el punto para cada patrón
-
-Con la matriz $B=N\,R$ se obtiene directamente la probabilidad de absorción en `GANA_PUNTO` o `PIERDE_PUNTO` desde cada patrón de longitud 3.
 
 ```{python}
-resultado_markov = modelo_markov['prob_abs'].copy()
-
-# Filtro de soporte mínimo para evitar patrones extremadamente raros
-resultado_filtrado = resultado_markov[resultado_markov['Visitas'] >= 5].copy()
-
-top_ganar = resultado_filtrado.sort_values(['Prob_Ganar', 'Visitas'], ascending=[False, False]).head(10)
-top_perder = resultado_filtrado.sort_values(['Prob_Perder', 'Visitas'], ascending=[False, False]).head(10)
-
-print('--- Patrones con mayor probabilidad de GANAR (Carolina) ---')
-show(top_ganar[['Patrón', 'Visitas', 'Prob_Ganar', 'Prob_Perder']].round(4))
-
-print('--- Patrones con mayor probabilidad de PERDER (Carolina) ---')
-show(top_perder[['Patrón', 'Visitas', 'Prob_Ganar', 'Prob_Perder']].round(4))
+def calcular_probabilidad_victoria(matriz_prob):
+    """
+    Calcula la probabilidad final de llegar a Point_Win o Point_Lose 
+    desde cada secuencia (terna) usando la matriz fundamental de Markov.
+    """
+    if matriz_prob.empty:
+        return pd.DataFrame()
+        
+    absorbentes = ['Point_Win', 'Point_Lose']
+    # Todos los estados que no son finales, son transitorios (nuestras ternas)
+    transitorios = [est for est in matriz_prob.index if est not in absorbentes]
+    
+    # Extraemos sub-matrices
+    Q = matriz_prob.loc[transitorios, transitorios].values
+    R = matriz_prob.loc[transitorios, absorbentes].values
+    I = np.eye(len(transitorios))
+    
+    # Calculamos Matriz Fundamental N = (I - Q)^-1
+    try:
+        N = np.linalg.inv(I - Q)
+    except np.linalg.LinAlgError:
+        # Usamos pseudo-inversa por seguridad si la matriz no es perfectamente invertible
+        N = np.linalg.pinv(I - Q)
+        
+    # Calculamos la probabilidad de absorción B = N * R
+    B = np.dot(N, R)
+    
+    # Devolvemos un DataFrame fácil de leer
+    df_resultados = pd.DataFrame(B, index=transitorios, columns=absorbentes)
+    
+    # Ordenamos de mayor a menor probabilidad de ganar el punto
+    df_resultados = df_resultados.sort_values(by='Point_Win', ascending=False)
+    
+    return df_resultados
 ```
+
 
 ```{python}
-# Gráfica 1: Top patrones con mayor probabilidad de ganar
-datos_plot_ganar = top_ganar.sort_values('Prob_Ganar', ascending=True)
+# 1. Construyes las matrices
+matriz_ataque, matriz_defensa = calcular_matrices_markov(resultados)
 
-plt.figure(figsize=(10, 5.5))
-plt.barh(datos_plot_ganar['Patrón'], datos_plot_ganar['Prob_Ganar'], color='#1f77b4')
-plt.xlabel('Probabilidad de ganar el punto')
-plt.ylabel('Patrón de longitud 3')
-plt.title('Patrones con mayor probabilidad de ganar (Carolina)')
-plt.xlim(0, 1)
-plt.grid(axis='x', linestyle='--', alpha=0.3)
-plt.tight_layout()
-plt.show()
+# 2. Calculas el valor de cada estado (terna) para Carolina
+probabilidades_ataque = calcular_probabilidad_victoria(matriz_ataque)
+probabilidades_defensa = calcular_probabilidad_victoria(matriz_defensa)
 
-# Gráfica 2: Top patrones con mayor probabilidad de perder
-datos_plot_perder = top_perder.sort_values('Prob_Perder', ascending=True)
-
-plt.figure(figsize=(10, 5.5))
-plt.barh(datos_plot_perder['Patrón'], datos_plot_perder['Prob_Perder'], color='#d62728')
-plt.xlabel('Probabilidad de perder el punto')
-plt.ylabel('Patrón de longitud 3')
-plt.title('Patrones con mayor probabilidad de perder (Carolina)')
-plt.xlim(0, 1)
-plt.grid(axis='x', linestyle='--', alpha=0.3)
-plt.tight_layout()
-plt.show()
+# Ver las 10 mejores combinaciones de Carolina
+print(probabilidades_ataque.head(10))
 ```
+
+Observamos que las probabilidades de ganar el punto para Carolina son 1 siempre en algunas secuencias. Esto puede deberse a que dichos patrones aparecen muy poco y siempre que aparecen, Carolina gana el punto. (Análogo para las rivales)
+
+Por lo tanto, vamos a filtrar para quedarnos solo con las secuencias que aparecen al menos 5 veces, y además, vamos a ponderar cada probabilidad por la frecuencia para descubrir cuáles son los patrones más contribuyentes a la victoria o derrota de un punto para Carolina Marín.
+
+
+```{python}
+import pandas as pd
+
+def refinar_con_frecuencia(df_probabilidades, tabla_patrones, jugadora_nombre, min_frecuencia=3):
+    """
+    Une las probabilidades con la frecuencia sumada correctamente.
+    Agrupa a todos los rivales y suma sus frecuencias por patrón.
+    """
+    # 1. Convertimos el índice a columna y arreglamos el formato "7-12-12" -> "[7, 12, 12]"
+    df_res = df_probabilidades.reset_index().rename(columns={'index': 'Patrón'})
+    df_res['Patrón'] = '[' + df_res['Patrón'].str.replace('-', ', ') + ']'
+    
+    # 2. Filtramos y AGRUPAMOS las frecuencias
+    if jugadora_nombre == 'Rival':
+        # Filtramos las que NO son Carolina
+        df_filtrado_nombres = tabla_patrones[tabla_patrones['Jugadora'] != 'Carolina Marin']
+    else:
+        # Filtramos solo a Carolina
+        df_filtrado_nombres = tabla_patrones[tabla_patrones['Jugadora'] == jugadora_nombre]
+        
+    # --- LA MAGIA ESTÁ AQUÍ ---
+    # Agrupamos por Patrón y sumamos las frecuencias de todas las jugadoras que hayan quedado
+    patrones_agrupados = df_filtrado_nombres.groupby('Patrón', as_index=False)['Frecuencia'].sum()
+    # ---------------------------
+    
+    # 3. Unimos las tablas (ahora es imposible que haya duplicados porque ya están sumados)
+    df_unido = pd.merge(df_res, patrones_agrupados, on='Patrón')
+    
+    # 4. Filtramos por la frecuencia mínima que tú decidas
+    df_filtrado = df_unido[df_unido['Frecuencia'] >= min_frecuencia].copy()
+    
+    # 5. Calculamos el Score Táctico (Probabilidad * Frecuencia total)
+    if not df_filtrado.empty:
+        df_filtrado['Score_Tactico'] = df_filtrado['Point_Win'] * df_filtrado['Frecuencia']
+        return df_filtrado.sort_values(by='Point_Win', ascending=False)
+    else:
+        print(f"Aviso: Ningún patrón superó la frecuencia mínima de {min_frecuencia}.")
+        return pd.DataFrame()
+
+# --- EJECUCIÓN ---
+carolina_refinada = refinar_con_frecuencia(probabilidades_ataque, tabla_patrones, 'Carolina Marin', min_frecuencia=5)
+contrarios_refinada = refinar_con_frecuencia(probabilidades_defensa, tabla_patrones, 'Rival', min_frecuencia=5)
+print("--- ATAQUE (Carolina Marín) ---")
+print(carolina_refinada[['Patrón', 'Point_Win', 'Frecuencia', 'Score_Tactico']].head())
+print("\n--- DEFENSA (Rivales) ---")
+print(contrarios_refinada[['Patrón', 'Point_Win', 'Frecuencia', 'Score_Tactico']].head())
+```
+
+
+
+
+Ya observamos cómo hay patrones de golpeo que no son de probabilidad 1 .
+
+A continuación, graficamos los patrones más contribuyentes tanto en los ataques de Carolina como en sus defensas. 
+
+
+```{python}
+import plotly.graph_objects as go
+import pandas as pd
+
+def visualizar_graficos_separados_simple(df_ataque, df_defensa, top_n=10):
+    """
+    Genera dos gráficos Plotly minimalistas.
+    Eje X = Probabilidad. Hover (ratón) = Score Táctico.
+    """
+    # 1. Preparamos los datos
+    if not df_ataque.empty:
+        ataque_top = df_ataque.head(top_n).iloc[::-1]
+    else:
+        ataque_top = pd.DataFrame(columns=['Patrón', 'Point_Win', 'Score_Tactico'])
+        
+    if not df_defensa.empty:
+        defensa_top = df_defensa.head(top_n).iloc[::-1]
+    else:
+        defensa_top = pd.DataFrame(columns=['Patrón', 'Point_Win', 'Score_Tactico'])
+
+    # Plantilla de ratón (hover) SÚPER SIMPLE: solo muestra el score
+    hover_simple = "<b>Score Táctico:</b> %{customdata[0]:.1f}<extra></extra>"
+
+    # --- FIGURA 1: ATAQUE ---
+    if not ataque_top.empty:
+        fig_ataque = go.Figure(go.Bar(
+            x=ataque_top['Point_Win'], # Pintamos probabilidad para que las barras tengan sentido (0 a 100%)
+            y=ataque_top['Patrón'],
+            orientation='h',
+            marker_color='#3498db', # Azul sólido simple
+            customdata=ataque_top[['Score_Tactico']], # Pasamos solo el Score Táctico al ratón
+            hovertemplate=hover_simple
+        ))
+        
+        fig_ataque.update_layout(
+            title_text="Ataque (Inicia Carolina)",
+            xaxis_title="Probabilidad de Ganar",
+            yaxis_title="", # Quitamos el título del eje Y por ser redundante
+            template="plotly_white",
+            height=400,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        fig_ataque.update_xaxes(tickformat=".0%", range=[0, 1.05])
+        fig_ataque.show()
+    else:
+        print("No hay suficientes datos de Ataque para graficar.")
+
+    # --- FIGURA 2: DEFENSA ---
+    if not defensa_top.empty:
+        fig_defensa = go.Figure(go.Bar(
+            x=defensa_top['Point_Win'],
+            y=defensa_top['Patrón'],
+            orientation='h',
+            marker_color='#e67e22', # Naranja sólido simple
+            customdata=defensa_top[['Score_Tactico']],
+            hovertemplate=hover_simple
+        ))
+        
+        fig_defensa.update_layout(
+            title_text="Defensa (Inicia Rival)",
+            xaxis_title="Probabilidad de Ganar (para Carolina)",
+            yaxis_title="",
+            template="plotly_white",
+            height=400,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        fig_defensa.update_xaxes(tickformat=".0%", range=[0, 1.05])
+        fig_defensa.show()
+    else:
+        print("No hay suficientes datos de Defensa para graficar.")
+
+# --- CÓMO EJECUTARLO ---
+visualizar_graficos_separados_simple(carolina_refinada, contrarios_refinada, top_n=10)
+```
+
+(Nota) La probabilidad de ganar es siempre de Carolina, entonces sólo hay que interpretar los patrones de ataque y defensa con la porbabilidad de win. Si hay un patrón de ataque con probabilidad de victoria alta, es un patrón que Carolina ejecuta bien y que le da muchas probabilidades de ganar el punto. Si hay un patrón de defensa con probabilidad de victoria alta, es un patrón de defensa de Carolina que le sale muy bien para darle la vuelta al punto. 
