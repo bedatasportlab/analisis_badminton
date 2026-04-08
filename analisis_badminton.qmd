@@ -16,6 +16,8 @@ number-sections: true
 lang: es
 ---
 
+# Importación de librerías y funciones necesarias.
+
 ```{python}
 #| echo: false
 # Importación de librerías
@@ -28,17 +30,314 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import seaborn as sns
 from itables import show
+import plotly.graph_objects as go
+from matplotlib.colors import Normalize
+
 ```
 
 ```{python}
 #| echo: false
-# Importación del dataset
-datos_badminton = pd.read_excel("datos_badminton.xlsx", engine="calamine")
+# 1. Diccionario solo para las nacionalidades
+nacionalidades = {
+    'Carolina Marin': 'ESP',
+    'Li Xuerui': 'CHN',
+    'Line Kjaersfeldt': 'DEN',
+    'Nanna Vainio': 'FIN',
+    'P. V. Sindhu': 'IND',
+    'Sung Ji Hyun': 'KOR'
+}
+
+# 2. Función adaptada a tu nuevo DataFrame
+def generar_rotulo_tv_definitivo(df, nombre_partido):
+    # Filtrar datos
+    df_partido = df[df['Match'] == nombre_partido].copy()
+    if df_partido.empty:
+        return
+
+    # Extraer nombres
+    j1 = df_partido['Player1'].iloc[0]
+    j2 = df_partido['Player2'].iloc[0]
+    
+    # Extraer ránkings DIRECTAMENTE del DataFrame
+    rank_j1 = int(df_partido['WR Player1'].iloc[0])
+    rank_j2 = int(df_partido['WR Player2'].iloc[0])
+
+    # Preparar puntuaciones
+    puntos_j1, puntos_j2 = ["-", "-", "-"], ["-", "-", "-"]
+    for _, fila in df_partido.iterrows():
+        set_idx = int(fila['Set']) - 1  # Añade el int() aquí
+        puntos_j1[set_idx] = int(fila['Player 1 Score'])
+        puntos_j2[set_idx] = int(fila['Player 2 Score'])
+
+    # --- INICIO DEL DIBUJO ---
+    fig, ax = plt.subplots(figsize=(10, 3.5), facecolor='#0f172a')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis('off')
+
+    # Fondos
+    ax.add_patch(patches.Rectangle((0.05, 0.1), 0.9, 0.7, facecolor='#1e293b', edgecolor='#334155', lw=1.5, zorder=1))
+    ax.add_patch(patches.Rectangle((0.05, 0.8), 0.9, 0.15, facecolor='#e11d48', zorder=2))
+    ax.add_line(plt.Line2D((0.05, 0.45), (0.45, 0.45), color='#334155', linewidth=1, zorder=3))
+
+    # Textos Cabecera
+    ax.text(0.08, 0.875, "BWF", color='white', fontsize=10, fontweight='bold', va='center', zorder=4)
+    ax.text(0.92, 0.875, "RESULTADOS", color='white', fontsize=10, fontweight='bold', va='center', ha='right', zorder=4)
+
+    # Nombres con país (buscando en el diccionario)
+    pais_j1 = nacionalidades.get(j1, 'OTH') # 'OTH' por defecto si no lo encuentra
+    pais_j2 = nacionalidades.get(j2, 'OTH')
+    ax.text(0.08, 0.64, f"{j1} ({pais_j1})", color='white', fontsize=18, fontweight='bold', va='center', zorder=4)
+    ax.text(0.08, 0.29, f"{j2} ({pais_j2})", color='#cbd5e1', fontsize=16, va='center', zorder=4)
+
+    # Ránkings (usando las variables extraídas de tu DF)
+    ax.text(0.08, 0.54, f"World Rank: {rank_j1}", color='#94a3b8', fontsize=10, va='center', zorder=4)
+    ax.text(0.08, 0.19, f"World Rank: {rank_j2}", color='#64748b', fontsize=10, va='center', zorder=4)
+
+    # Cabeceras Sets
+    posiciones_x = [0.65, 0.78, 0.91]
+    for i, x in enumerate(posiciones_x):
+        ax.text(x, 0.73, f"GAME {i+1}", color='#94a3b8', fontsize=9, fontweight='bold', ha='center', zorder=4)
+
+    # Puntos por Set con colores condicionales
+    for i, x in enumerate(posiciones_x):
+        p1, p2 = puntos_j1[i], puntos_j2[i]
+        
+        color_p1 = '#fde047' if p1 != "-" and p1 > p2 else ('white' if p1 != "-" else '#475569')
+        color_p2 = '#fde047' if p2 != "-" and p2 > p1 else ('#cbd5e1' if p2 != "-" else '#475569')
+        peso_p1 = 'bold' if color_p1 == '#fde047' else 'normal'
+        peso_p2 = 'bold' if color_p2 == '#fde047' else 'normal'
+
+        ax.text(x, 0.625, str(p1), color=color_p1, fontsize=20, fontweight=peso_p1, ha='center', va='center', zorder=4)
+        ax.text(x, 0.275, str(p2), color=color_p2, fontsize=20, fontweight=peso_p2, ha='center', va='center', zorder=4)
+
+    # Indicador de ganadora
+    ax.text(0.06, 0.64, "▶", color='#fde047', fontsize=12, va='center', ha='center', zorder=4)
+
+    plt.tight_layout()
+    return fig
+
+
+
+def dibujar_mapa_calor_profesional(df_frecuencia):
+    """
+    Dibuja un mapa de calor de media pista de bádminton.
+    Z1-Z4: Red | Z5-Z8: Media | Z9-Z12: Fondo
+    """
+    # 1. Procesamiento de datos
+    total_golpes = df_frecuencia['Frecuencia'].sum()
+    df_frecuencia['Porcentaje'] = (df_frecuencia['Frecuencia'] / total_golpes * 100).round(1)
+    
+    # Creamos la matriz 3x4 (3 filas de profundidad, 4 columnas de ancho)
+    # Plotly dibuja la matriz de abajo hacia arriba.
+    # Por tanto: Fila 0 (abajo) = Fondo, Fila 2 (arriba) = Red.
+    z_data = np.zeros((3, 4))
+    hover_text = np.empty((3, 4), dtype=object)
+    
+    # Mapeo de zonas según tu esquema (Z1-Z4 arriba en la red)
+    # Matriz[fila][columna]
+    mapping = {
+        2: [1, 2, 3, 4],    # Fila superior (Pegada a la red)
+        1: [5, 6, 7, 8],    # Fila media
+        0: [9, 10, 11, 12]  # Fila inferior (Fondo de pista)
+    }
+
+    for row_idx, zone_ids in mapping.items():
+        for col_idx, z_id in enumerate(zone_ids):
+            dato = df_frecuencia[df_frecuencia['Zonas de golpeo'] == z_id]
+            freq = dato['Frecuencia'].values[0] if not dato.empty else 0
+            pct = dato['Porcentaje'].values[0] if not dato.empty else 0
+            
+            z_data[row_idx, col_idx] = freq
+            hover_text[row_idx, col_idx] = (
+                f"<b>ZONA {z_id}</b><br>"
+                f"Frecuencia: {freq} golpeos<br>"
+                f"Porcentaje: {pct}%"
+            )
+
+    # 2. Configuración de dimensiones
+    ancho_pista = 6.1
+    largo_media = 6.7
+    
+    fig = go.Figure()
+
+    # 3. Mapa de Calor (Interactivo)
+    fig.add_trace(go.Heatmap(
+        z=z_data,
+        x=[ancho_pista * (i/4 + 1/8) for i in range(4)], # Centrar en las 4 columnas
+        y=[largo_media * (i/3 + 1/6) for i in range(3)],  # Centrar en las 3 filas
+        colorscale='YlOrRd',
+        showscale=True,
+        text=hover_text,
+        hoverinfo="text",
+        opacity=0.8
+    ))
+
+    # 4. Líneas de las ZONAS (Gris suave, discontinuas)
+    # Líneas verticales divisorias de zonas
+    for x in [1.525, 3.05, 4.575]:
+        fig.add_shape(type="line", x0=x, y0=0, x1=x, y1=6.7, 
+                      line=dict(color="rgba(255,255,255,0.5)", width=2, dash="dot"))
+    # Líneas horizontales divisorias de zonas
+    for y in [2.23, 4.46]:
+        fig.add_shape(type="line", x0=0, y0=y, x1=6.1, y1=y, 
+                      line=dict(color="rgba(255,255,255,0.5)", width=2, dash="dot"))
+
+    # 5. Líneas del CAMPO (Blanco sólido, oficiales)
+    line_field = dict(color="white", width=4)
+    # Perímetro
+    fig.add_shape(type="rect", x0=0, y0=0, x1=6.1, y1=6.7, line=line_field)
+    # Pasillos de dobles (laterales)
+    fig.add_shape(type="line", x0=0.46, y0=0, x1=0.46, y1=6.7, line=dict(color="white", width=2))
+    fig.add_shape(type="line", x0=5.64, y0=0, x1=5.64, y1=6.7, line=dict(color="white", width=2))
+    # Línea de servicio corto (1.98m desde la red)
+    # Como la red está en y=6.7, la línea está en y = 6.7 - 1.98 = 4.72
+    fig.add_shape(type="line", x0=0, y0=4.72, x1=6.1, y1=4.72, line=line_field)
+    # Línea central
+    fig.add_shape(type="line", x0=3.05, y0=0, x1=3.05, y1=4.72, line=line_field)
+
+    # 6. LA RED "ESTILO 3D"
+    # Postes laterales
+    fig.add_shape(type="rect", x0=-0.1, y0=6.7, x1=0, y1=6.85, fillcolor="black")
+    fig.add_shape(type="rect", x0=6.1, y0=6.7, x1=6.2, y1=6.85, fillcolor="black")
+    # Red (Banda superior blanca y malla oscura)
+    fig.add_shape(type="rect", x0=0, y0=6.72, x1=6.1, y1=6.8, fillcolor="#333", line_width=0)
+    fig.add_shape(type="rect", x0=0, y0=6.8, x1=6.1, y1=6.85, fillcolor="white", line_width=0)
+    
+    fig.add_annotation(x=3.05, y=7.1, text="NET / RED", showarrow=False, 
+                       font=dict(size=14, color="black", family="Arial Black"))
+
+    # Estética final
+    fig.update_layout(
+        title="<b>Heatmap Táctico: Distribución de Golpeos</b>",
+        xaxis=dict(visible=False, range=[-0.5, 6.6]),
+        yaxis=dict(visible=False, range=[-0.2, 7.5]),
+        margin=dict(l=20, r=20, t=60, b=20),
+        width=550, height=700,
+        paper_bgcolor="white",
+        plot_bgcolor="white"
+    )
+
+    return fig
+
+
+
+def crear_heatmap_dinamico_badminton(df_partidos):
+    partidos = df_partidos['Partido'].unique()
+    fig = go.Figure()
+    
+    # Distribución 3 fondo x 4 ancho
+    # Z1-Z4 (Red) -> Z5-Z8 (Media) -> Z9-Z12 (Fondo)
+    mapping = {
+        2: [1, 2, 3, 4],    # Fila superior (Red)
+        1: [5, 6, 7, 8],    # Fila central
+        0: [9, 10, 11, 12]  # Fila inferior (Fondo)
+    }
+    
+    ancho_pista = 6.1
+    largo_media = 6.7
+    botones = []
+    
+    for i, nombre_partido in enumerate(partidos):
+        df_p = df_partidos[df_partidos['Partido'] == nombre_partido]
+        total_g = df_p['Frecuencia'].sum()
+        
+        z_data = np.zeros((3, 4))
+        hover_text = np.empty((3, 4), dtype=object)
+        
+        for row_idx, zone_ids in mapping.items():
+            for col_idx, z_id in enumerate(zone_ids):
+                dato = df_p[df_p['Zonas de golpeo'] == z_id]
+                freq = int(dato['Frecuencia'].values[0]) if not dato.empty else 0
+                pct = round((freq / total_g * 100), 1) if total_g > 0 else 0
+                
+                z_data[row_idx, col_idx] = freq
+                hover_text[row_idx, col_idx] = (
+                    f"<b>{nombre_partido}</b><br>"
+                    f"Zona {z_id}<br>"
+                    f"Golpes: {freq}<br>"
+                    f"Frecuencia: {pct}%"
+                )
+
+        # Añadimos el Heatmap SIN zmax (Escala local por partido)
+        fig.add_trace(go.Heatmap(
+            z=z_data,
+            x=[ancho_pista * (j/4 + 1/8) for j in range(4)],
+            y=[largo_media * (j/3 + 1/6) for j in range(3)],
+            colorscale='YlOrRd',
+            visible=(i == 0),
+            text=hover_text,
+            hoverinfo="text",
+            showscale=True,
+            colorbar=dict(title="Golpes", thickness=15, x=1.02)
+        ))
+        
+        # Botón para el menú
+        visibilidad = [False] * len(partidos)
+        visibilidad[i] = True
+        botones.append(dict(
+            label=f" {nombre_partido} ",
+            method="update",
+            args=[{"visible": visibilidad}]
+        ))
+
+    # --- ELEMENTOS ESTÁTICOS DE LA PISTA ---
+    lineas_esteticas = []
+    # Líneas divisorias de las 12 zonas (discontinuas)
+    for x in [1.525, 3.05, 4.575]:
+        lineas_esteticas.append(dict(type="line", x0=x, y0=0, x1=x, y1=6.7, line=dict(color="rgba(255,255,255,0.4)", dash="dot", width=1)))
+    for y in [2.23, 4.46]:
+        lineas_esteticas.append(dict(type="line", x0=0, y0=y, x1=6.1, y1=y, line=dict(color="rgba(255,255,255,0.4)", dash="dot", width=1)))
+
+    # Líneas oficiales de la pista
+    lineas_campo = [
+        dict(type="rect", x0=0, y0=0, x1=6.1, y1=6.7, line=dict(color="white", width=3)),
+        dict(type="line", x0=0.46, y0=0, x1=0.46, y1=6.7, line=dict(color="white", width=1.5)),
+        dict(type="line", x0=5.64, y0=0, x1=5.64, y1=6.7, line=dict(color="white", width=1.5)),
+        dict(type="line", x0=0, y0=4.72, x1=6.1, y1=4.72, line=dict(color="white", width=3)), # Serv. Corto
+        dict(type="line", x0=3.05, y0=0, x1=3.05, y1=4.72, line=dict(color="white", width=3)), # Central
+    ]
+
+    # Red "3D" Pro
+    red_visual = [
+        dict(type="rect", x0=-0.1, y0=6.7, x1=6.2, y1=6.74, fillcolor="#333"),
+        dict(type="rect", x0=-0.1, y0=6.74, x1=6.2, y1=6.8, fillcolor="#eee"),
+        dict(type="line", x0=-0.1, y0=6.7, x1=-0.1, y1=7.0, line=dict(color="black", width=5)),
+        dict(type="line", x0=6.2, y0=6.7, x1=6.2, y1=7.0, line=dict(color="black", width=5)),
+    ]
+
+    # --- LAYOUT DEFINITIVO ---
+    fig.update_layout(
+        title={
+            'text': "<b>MAPA DE CALOR TÁCTICO</b><br><span style='font-size:12px; color:gray;'>Análisis por zonas de media pista</span>",
+            'y': 0.95, 'x': 0.5, 'xanchor': 'center'
+        },
+        updatemenus=[{
+            "buttons": botones,
+            "direction": "down",
+            "showactive": True,
+            "x": 0.5, "xanchor": "center",
+            "y": 1.1, "yanchor": "top",
+            "bgcolor": "#ffffff",
+            "bordercolor": "#888"
+        }],
+        width=600, height=750,
+        margin=dict(t=130, b=20, l=40, r=60),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        xaxis=dict(visible=False, range=[-0.6, 6.7]),
+        yaxis=dict(visible=False, range=[-0.2, 7.6]),
+        shapes=lineas_esteticas + lineas_campo + red_visual
+    )
+
+    return fig
 ```
+
+---
 
 # Introducción
 
-La ganancia de puntos en los deportes de raqueta se consigue enviando la pelota o el volante a una zona de la pista a la que el contrincante no es capaz de llegar para devolver el golpe. En bádminton, los partidos se ganan al mejor de 3 **sets**. Para ganar un set se deben conseguir 21 **puntos** con una distancia mínima de 2 con respecto al contrario. En caso de una distancia menor, la puntuación por set puede alcanzar un máximo de 30 puntos.
+La ganancia de puntos en los deportes de raqueta se consigue enviando la pelota o el volante a una zona de la pista a la que el contrincante no es capaz de llegar, o llega muy forzado, para devolver el golpe. En bádminton, los partidos se ganan al mejor de 3 **sets**. Para ganar un set se deben conseguir 21 **puntos** con una distancia mínima de 2 con respecto al contrario. En caso de una distancia menor, la puntuación por set puede alcanzar un máximo de 30 puntos.
 
 Para sumar dichos puntos al marcador se deben ganar los rallies. Un **rally** es la secuencia completa desde que un jugador saca hasta que el volante toca el suelo, va fuera de la pista o acaba en la red. Cada vez que uno de los contrincantes saca, comienza un nuevo rally. Este está compuesto por intercambios entre los jugadores, llamados **stroke**. En otras palabras, un stroke ocurre cada vez que el volante sobrepasa la red.
 
@@ -52,11 +351,56 @@ La pista se divide en dos campos a cada lado de la red, cada uno de los cuales s
 Para resolver estas preguntas, en el presente análisis se utilizan varios datos de partidos de Carolina Marín. 
 Se estudiarán las zonas y secuencias de golpeo con el objetivo de conocer la probabilidad de ganar un punto de dicha jugadora.
 
-# Análisis básico del dataset
+---
 
-Los datos de los partidos se han cargado en el dataset *datos_badminton*. 
 
-Se comienza con un análisis básico de comprobación de calidad y reconocimiento de los datos.
+# Procedimiento del análisis
+
+El actual análisis se estructura en las siguientes partes:
+
+1. **Importación del dataset**: Se carga el dataset con los datos de los partidos de Carolina Marín y se realiza un pequeño análisis exploratorio inicial.
+2. **Obtención de estadísticas principales de las zonas de golpeo**: Frecuencia, probabilidad de ganar desde cada zona, etc.
+3. **Obtención de las secuencias de golpeo de cada punto**: Secuencias de zonas desde el saque hasta el final del punto.
+4. **Realización de una estadística de las secuencias de golpeo**: Longitudes más habituales, probabilidad de ganar de Carolina en función de la longitud.
+5. **Extracción de patrones de longitud 3**
+6. **Construcción de la matriz de Markov de los patrones detectados**
+
+---
+
+
+# Importación del dataset. Análisis exploratorio inicial.
+
+A continuación, importamos el dataset con los datos de los partidos de Carolina Marín. 
+
+```{python}
+# Importación del dataset
+datos_badminton = pd.read_excel("datos_badminton.xlsx", engine="calamine")
+```
+
+Antes de comenzar con el análisis, es importante conocer el significado de cada una de las variables del dataset. Para ello, se presenta el siguiente diccionario de datos.
+
+
+| Variable | Descripción | Tipo de Dato | Ejemplo del dataset |
+|:---|:---|:---|:---|
+| **Match** | Identificador de los jugadores que disputan el partido. | `object` (String) | `Carolina Marin-Li Xuerui` |
+| **Set** | Número del set en juego. | `int64` (Entero) | `1` |
+| **Rally** | Número de punto dentro de un set en juego. | `int64` (Entero) | `0` |
+| **Stroke** | Número secuencial del golpe dentro del punto (Rally). | `int64` (Entero) | `1`, `2`, `3`... |
+| **X** | Coordenada horizontal desde donde se golpea/aterriza el volante. | `int64` / `float64` | `10`, `-14` |
+| **Y** | Coordenada vertical desde donde se golpea/aterriza el volante. | `int64` / `float64` | `55`, `-54` |
+| **Zone** | Código identificador de la zona de la pista del impacto. | `int64` (Categórico)| `12`, `5`, `67` |
+| **Jugador del golpeo** | Nombre de la jugadora que ejecuta ese golpe específico. | `object` (String) | `Li Xuerui` |
+| **Player1** | Nombre de la jugadora asignada como Jugadora 1. | `object` (String) | `Carolina Marin` |
+| **Player2** | Nombre de la jugadora asignada como Jugadora 2. | `object` (String) | `Li Xuerui` |
+| **Player 1 Score** | Puntuación de la Jugadora 1 en el momento del golpe. | `int64` (Entero) | `0` |
+| **Player 2 Score** | Puntuación de la Jugadora 2 en el momento del golpe. | `int64` (Entero) | `0` |
+| **WR Player1** | *World Ranking* (Clasificación Mundial) de la Jugadora 1. | `int64` (Entero) | `1` |
+| **WR Player2** | *World Ranking* (Clasificación Mundial) de la Jugadora 2. | `int64` (Entero) | `3` |
+
+: Diccionario de variables del dataset {#tbl-diccionario-datos}
+
+
+Tras conocer el significado de cada una de las variables, vamos a hacer un análisis básico de comprobación de calidad y reconocimiento de los datos. 
 
 ```{python}
 # 1. Primeras filas
@@ -76,64 +420,265 @@ print(resumen_columnas)
 print(f"\nTotal de filas duplicadas: {datos_badminton.duplicated().sum()}")
 ```
 
+
 Se observan los tipos de dato que hay en cada columna y se comprueba que no hay valores faltantes ni duplicados de ningún set, rally, stroke o punto. Por tanto, los datos se presentan limpios para su tratamiento.
 
-## Estadísticas básicas de los partidos
 
-Conociendo las características principales del dataset y lo que significa cada una de las variables, se procede a obtener unas estadísticas básicas de los partidos que ha jugado Carolina Marín.
 
-En la primera tabla se observa resumidamente la puntuación por set de Carolina Marín y de su contricante en cada uno de los partidos.
+## Estadísticas básicas. Resultados de los partidos
+
+Conociendo las características principales del dataset y lo que significa cada una de las variables, se procede a obtener los resultados de los partidos que ha jugado Carolina Marín. 
+
+Para ello, primero calculamos los resultados de cada set: 
 
 ```{python}
 # Obtener la puntuación final de cada jugadora por cada set
-resumen_sets = datos_badminton.groupby(['Match', 'Set', 'Player1', 'Player2'])[['Player 1 Score', 'Player 2 Score']].max().reset_index()
+resumen_sets = datos_badminton.groupby(['Match', 'Set', 'Player1', 'Player2', 'WR Player1', 'WR Player2'])[['Player 1 Score', 'Player 2 Score']].max().reset_index()
 
-print("--- Puntos por Set ---")
-show(resumen_sets)
+for partido in resumen_sets['Match'].unique():
+    fig_rotulo = generar_rotulo_tv_definitivo(resumen_sets, partido)
+    plt.show()
+
+
 ```
 
-En la segunda tabla que se presenta a continuación se cuenta el total de sets ganados a lo largo de todos los partidos para todas las jugadoras.
+Viendo los resultados, sólo una jugadora ganó un set contra Carolina Marín, siendo el único partido que llegó a 3 sets. En el resto de partidos, Carolina Marín ganó los 2 sets disputados.
+
+La ganadora de todos los partidos fue Carolina Marín. 
+
+
+---
+
+
+
+
+# Estadísticas principales de las zonas de golpeo
+
+Habiendo realizado un vistazo general a los partidos de la jugadora española, se procede a analizar en profundidad el juego obteniendo estadísticas sobre las zonas de golpeo.
+
+## Zonas de golpeo más frecuentes del dataset. Heatmap
+
+En primer lugar, se hace un recuento de las zonas de golpeo más frecuentes en el total de los partidos, sin hacer distinción por el momento entre jugadoras.
+
 
 ```{python}
-resumen_sets['Ganadora_Set'] = np.where(
-    resumen_sets['Player 1 Score'] > resumen_sets['Player 2 Score'], 
-    resumen_sets['Player1'], 
-    resumen_sets['Player2']
-)
+frecuencia_zonas_golpeo = datos_badminton['Zone'].value_counts().reset_index()
+frecuencia_zonas_golpeo.columns = ['Zonas de golpeo', 'Frecuencia']
 
-sets_totales = resumen_sets['Ganadora_Set'].value_counts().reset_index()
+print("--- Zonas de golpeo más habituales en los partidos ---")
+print(frecuencia_zonas_golpeo.head(10).to_string(index=False))
 
-print("\n--- Total de Sets Ganados ---")
-print(sets_totales.to_string(index=False))
+# Creamos un heatmap de la pista de bádminton: 
+dibujar_mapa_calor_profesional(frecuencia_zonas_golpeo)
+
 ```
 
-Se ve que en todos los partidos del dataset, solo una jugadora ganó un set contra Carolina Marín, el único de los partidos que llegó a 3 sets.
 
-Por último, se busca quién fue la ganadora de cada uno de los 5 partidos, siendo en todos ellos Carolina Marín.
+Podemos observar cómo, la zona 12 es la zona más frecuente de golpeo, seguido de la zona 1. Se observa cómo las esquinas son las zonas más frecuentes, seguidas de las 4 zonas de media pista que tienen una influencia menor. Por último, las 4 zonas centrales en fondo de pista y al lado de la red son las menos frecuentes.
+
+
+## Zonas de golpeo más frecuentes por partido. Heatmap
+
+Vamos a profundizar y revisar cuáles son las zonas de golpeo más frecuentes en cada partido. Para ello, se hace un conteo de las zonas de golpeo agrupando por partido. 
 
 ```{python}
-conteo_sets_partido = resumen_sets.groupby(['Match', 'Ganadora_Set']).size().reset_index(name='Sets_Ganados')
+frecuencias_golpeo_partido = datos_badminton.groupby(['Match'], sort=False)['Zone'].value_counts().reset_index()
+frecuencias_golpeo_partido.columns = ['Partido', 'Zonas de golpeo', 'Frecuencia']
 
-ganadoras_partido = conteo_sets_partido.sort_values('Sets_Ganados', ascending=False).drop_duplicates('Match')
+print("--- Zonas de golpeo más habituales en cada partido ---")
+print(frecuencias_golpeo_partido.head(10).to_string(index=False))
 
-ganadoras_partido = ganadoras_partido[['Match', 'Ganadora_Set']].rename(columns={
-    'Match': 'Partido', 
-    'Ganadora_Set': 'Ganadora del Partido'
-})
-
-print("--- Ganadora de cada Partido ---")
-print(ganadoras_partido.to_string(index=False))
+# Heatmap de la frecuencia de golpeo por zona y partido
+crear_heatmap_dinamico_badminton(frecuencias_golpeo_partido)
 ```
 
-# Estadísticas de las zonas de golpeo
+Se observa que, dependiendo del partido, las zonas más frecuentes de golpeo varían. Esto indica que no todos los partidos que juega Carolina Marín tienen los mismos patrones de golpeo, dando lugar a la necesidad de analizar los patrones de golpeo de cada partido. 
 
-Habiendo realizado un vistazo general a los partidos de la jugadora española, se procede a analizar en profundidad el juego obteniendo las estadísticas de las zonas y las secuencias de golpeo.
 
-Antes de comenzar, el siguiente código muestra un campograma de una pista de badminton. Más adelante pintaremos sobre él las zonas de golpeo más frecuentes y distintas estadísticas.
+## Zonas de golpeo más frecuentes de Carolina Marín. Heatmap
+
+Teniendo ya las estadísticas generales, vamos a calcular ahora las zonas más frecuentes desde donde golpea Carolina Marín. 
 
 ```{python}
-import matplotlib.patches as patches
-from matplotlib.colors import Normalize
+frecuencia_zonas_golpeo_Carolina = datos_badminton.groupby(['Jugador del golpeo'])['Zone'].value_counts().reset_index()
+frecuencia_zonas_golpeo_Carolina.columns = ['Jugadora', 'Zonas de golpeo', 'Frecuencia']
+frecuencia_zonas_golpeo_Carolina = frecuencia_zonas_golpeo_Carolina[frecuencia_zonas_golpeo_Carolina['Jugadora'] == 'Carolina Marin'].reset_index(drop=True)
+
+print("--- Zonas de golpeo más habituales de Carolina Marín en los partidos ---")
+print(frecuencia_zonas_golpeo_Carolina.head(14).to_string(index=False))
+
+# Usando la función 'dibujar_mapa_calor_profesional' que definimos antes
+# Solo tienes que pasarle tu nuevo DataFrame filtrado
+fig_carolina = dibujar_mapa_calor_profesional(frecuencia_zonas_golpeo_Carolina)
+
+fig_carolina.update_layout(title="<b>Mapa de Calor: Carolina Marín</b><br>Frecuencia total de golpeo en los 5 partidos")
+fig_carolina.show()
+```
+
+Observamos que las zonas más frecuentes de golpeo de Carolina son la zona 9 y la zona 12. En el fondo de la pista.
+
+
+## Zonas de golpeo más frecuentes de Carolina Marín por partido. Heatmap
+
+Vamos a profundizar y revisar cuáles son las zonas de golpeo más frecuentes de Carolina Marín en cada partido. Para ello, se hace un conteo de las zonas de golpeo agrupando por partido y filtrando por jugadora.
+
+```{python}
+datos_Carolina = datos_badminton[datos_badminton['Jugador del golpeo'] == 'Carolina Marin']
+
+frecuencias_golpeo_partido_Carolina = datos_Carolina.groupby(['Match', 'Jugador del golpeo'], sort=False)['Zone'].value_counts().reset_index()
+frecuencias_golpeo_partido_Carolina.columns = ['Partido', 'Jugadora', 'Zonas de golpeo', 'Frecuencia']
+
+print("--- Zonas de golpeo más habituales en cada partido ---")
+print(frecuencias_golpeo_partido_Carolina.head(10).to_string(index=False))
+
+# Heatmap de la frecuencia de golpeo por zona y partido para Carolina Marín
+crear_heatmap_dinamico_badminton(frecuencias_golpeo_partido_Carolina)
+```
+
+
+---
+
+## Zonas de golpeo más efectivas para Carolina Marín.
+
+Una vez revisadas las zonas más frecuentes desde donde se golpea y desde donde golpea Carolina Marín, es importante conocer cuáles son sus "zonas de comfort", es decir, aquellas zonas desde donde tiene mayor probabilidad de ganar el punto. 
+
+Para ello se observa cuál ha sido la zona final de cada rally y si en esa zona la puntuación de Carolina en la columna *Player 1 Score* ha aumentado en una unidad. Tras ello, revisamos cuál es el último golpeo del rally que ha realizado Carolina Marín, obteniéndose así los puntos ganados por Carolina Marín en cada zona. 
+
+Siguiendo con la misma dinámica, primero se presenta esta información para todos los partidos. 
+
+```{python}
+import pandas as pd
+import numpy as np
+
+def analizar_zonas_y_puntos(df, nombre_jugadora='Carolina Marin'):
+    df_temp = df.copy()
+
+    # 1. DETERMINAR QUIÉN GANÓ EL RALLY (Marcador final)
+    # Buscamos la última fila de cada rally para ver el marcador
+    final_rallies = df_temp.sort_values(['Match', 'Set', 'Rally', 'Stroke']).groupby(['Match', 'Set', 'Rally'], sort=False).tail(1).copy()
+    
+    # Comparamos puntos para saber si Carolina (P1) sumó
+    final_rallies['Score_Previo_P1'] = final_rallies.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
+    final_rallies['Gana_P1'] = final_rallies['Player 1 Score'] > final_rallies['Score_Previo_P1']
+    
+    resultado_rallies = final_rallies[['Match', 'Set', 'Rally', 'Gana_P1']]
+
+    # 2. BUSCAR LA ÚLTIMA POSICIÓN REAL (1-12) DE CAROLINA
+    # Filtramos: Solo golpes de Carolina Y que la zona sea un NÚMERO (1-12)
+    # Esto elimina 'Red' y 'Out' de la búsqueda de la zona, pero NO del rally
+    golpes_carolina = df_temp[df_temp['Jugador del golpeo'] == nombre_jugadora].copy()
+    
+    # Convertimos Zone a número. Lo que no sea número (Red/Out) se vuelve NaN y lo borramos
+    golpes_carolina['Zone_Num'] = pd.to_numeric(golpes_carolina['Zone'], errors='coerce')
+    posiciones_reales = golpes_carolina.dropna(subset=['Zone_Num'])
+    
+    # Ahora sí, de los golpes que tienen número, pillamos el último de cada rally
+    ultima_posicion_caro = posiciones_reales.sort_values(['Match', 'Set', 'Rally', 'Stroke']).groupby(['Match', 'Set', 'Rally'], sort=False).tail(1)
+    
+    posicion_final_caro = ultima_posicion_caro[['Match', 'Set', 'Rally', 'Zone_Num']]
+    posicion_final_caro.columns = ['Match', 'Set', 'Rally', 'Zona_Carolina']
+
+    # 3. CRUCE: Zona real de Carolina + Resultado del ganador
+    df_final = posicion_final_caro.merge(resultado_rallies, on=['Match', 'Set', 'Rally'], how='inner')
+
+    # 4. AGRUPAR PARA EL HEATMAP (Zonas 1-12)
+    resumen = df_final.groupby('Zona_Carolina').agg(
+        Total_Rallies_Finalizados=('Gana_P1', 'count'),
+        Puntos_Ganados=('Gana_P1', 'sum')
+    ).reset_index()
+
+    # 5. CÁLCULO DE EFECTIVIDAD
+    resumen.columns = ['Zona', 'Total Rallies Finalizados', 'Puntos Ganados']
+    resumen['% Efectividad P1'] = (resumen['Puntos Ganados'] / resumen['Total Rallies Finalizados'] * 100).round(2)
+
+    # Convertimos la zona a entero para que se vea limpio (1, 2, 3...)
+    resumen['Zona'] = resumen['Zona'].astype(int)
+
+    return resumen.sort_values(by='Puntos Ganados', ascending=False)
+
+analisis_zonas = analizar_zonas_y_puntos(datos_badminton)
+print("--- Relación de Zonas Finales y Puntos Ganados por Player1 en el total de partidos ordenadas por efectividad ---")
+analisis_zonas = analisis_zonas.sort_values(by='% Efectividad P1', ascending=False)
+print(analisis_zonas.to_string(index=False))
+
+
+```
+
+De aquí podemos observar como las zonas 3, 2 y 9 son las zonas favoritas de Carolina. 
+
+
+## Zonas de golpeo más efectivas para Carolina Marín por partido.
+
+Ahora vamos a profundizar en las zonas más efectivas por partido. Para ello, se hace el mismo análisis pero agrupando por partido.
+
+```{python}
+def analizar_zonas_y_puntos_partido(df, nombre_jugadora='Carolina Marin'):
+    df_temp = df.copy()
+
+    # 1. DETERMINAR EL RESULTADO DE CADA RALLY (Quién ganó el punto)
+    # Buscamos la última fila de cada rally (el stroke máximo)
+    final_rallies = df_temp.sort_values(['Match', 'Set', 'Rally', 'Stroke']).groupby(['Match', 'Set', 'Rally'], sort=False).tail(1).copy()
+    
+    # Calculamos si Carolina sumó punto comparando con el score anterior del mismo set
+    final_rallies['Score_Previo_P1'] = final_rallies.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
+    final_rallies['Gana_P1'] = final_rallies['Player 1 Score'] > final_rallies['Score_Previo_P1']
+    
+    # Guardamos el resultado por rally y partido
+    resultado_rallies = final_rallies[['Match', 'Set', 'Rally', 'Gana_P1']]
+
+    # 2. IDENTIFICAR LA ÚLTIMA ZONA "REAL" (1-12) DE CAROLINA POR RALLY
+    # Filtramos: Solo golpes de Carolina
+    golpes_carolina = df_temp[df_temp['Jugador del golpeo'] == nombre_jugadora].copy()
+    
+    # Limpieza: Convertimos Zone a número; 'Red' y 'Out' se vuelven NaN y los eliminamos
+    golpes_carolina['Zone_Num'] = pd.to_numeric(golpes_carolina['Zone'], errors='coerce')
+    posiciones_reales = golpes_carolina.dropna(subset=['Zone_Num'])
+    
+    # Obtenemos el último golpe numérico de Carolina en cada rally
+    ultima_posicion_caro = posiciones_reales.sort_values(['Match', 'Set', 'Rally', 'Stroke']).groupby(['Match', 'Set', 'Rally'], sort=False).tail(1)
+    
+    posicion_final_caro = ultima_posicion_caro[['Match', 'Set', 'Rally', 'Zone_Num']]
+    posicion_final_caro.columns = ['Match', 'Set', 'Rally', 'Zona_Carolina']
+
+    # 3. UNIR RESULTADOS (Zona de Carolina + Ganador del Rally)
+    df_merge = posicion_final_caro.merge(resultado_rallies, on=['Match', 'Set', 'Rally'], how='inner')
+
+    # 4. AGRUPAR POR PARTIDO Y ZONA
+    comparativa = df_merge.groupby(['Match', 'Zona_Carolina']).agg(
+        Puntos_Ganados=('Gana_P1', 'sum'),
+        Total_Rallies_Finalizados=('Gana_P1', 'count')
+    ).reset_index()
+
+    # 5. CÁLCULO DE MÉTRICAS Y FORMATO
+    comparativa['% Efectividad P1'] = (comparativa['Puntos_Ganados'] / comparativa['Total_Rallies_Finalizados'] * 100).round(2)
+    
+    # Renombrar y ordenar columnas para que coincida con lo que esperas
+    comparativa.columns = ['Partido', 'Zona', 'Puntos Ganados', 'Total Rallies Finalizados', '% Efectividad P1']
+    
+    # Convertimos la zona a entero para que no salga como 1.0, 2.0...
+    comparativa['Zona'] = comparativa['Zona'].astype(int)
+    
+    # Reordenar columnas según tu preferencia
+    orden_columnas = ['Partido', 'Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']
+    comparativa = comparativa[orden_columnas]
+
+    return comparativa.sort_values(by=['Partido', 'Puntos Ganados'], ascending=[True, False])
+
+# Ejecución
+analisis_zonas_partido = analizar_zonas_y_puntos_partido(datos_badminton)
+print("--- Efectividad de Carolina Marín por Zona en cada Partido ---")
+print(analisis_zonas_partido.to_string(index=False))
+```
+
+
+
+## Visualización de las zonas de golpeo más efectivas para Carolina Marín. Campograma
+
+Tras obtener las estadísticas de las zonas de golpeo más efectivas para Carolina Marín, es importante visualizar esta información sobre un campograma de la pista de bádminton.
+
+```{python}
+#| include: false
+
 
 def dibujar_mapa_badminton_zonas(valores_superior=None, valores_inferior=None, mostrar_porcentaje=True, cmap=plt.cm.Blues):
     fig, ax = plt.subplots(figsize=(8, 11))
@@ -149,21 +694,19 @@ def dibujar_mapa_badminton_zonas(valores_superior=None, valores_inferior=None, m
     ax.set_aspect('equal')
     ax.axis('off')
 
-    # Fondo de la pista completa
+    # Fondo de la pista
     pista = patches.Rectangle((0, 0), ancho, alto_total, facecolor=color_fondo, edgecolor='none')
     ax.add_patch(pista)
 
-    # Contorno exterior y red central
-    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, fill=False, edgecolor='gray', linewidth=1.8))
-    ax.plot([0, ancho], [alto_mitad, alto_mitad], color='black', linewidth=2.2)
+    # Contorno y Red
+    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, fill=False, edgecolor='gray', linewidth=2))
+    ax.plot([0, ancho], [alto_mitad, alto_mitad], color='black', linewidth=3.5, zorder=10) # Red marcada
 
-    # Zonas 4x3 en cada mitad
     zona_ancho = ancho / 4
     zona_alto = alto_mitad / 3
 
     def preparar_matriz(valores):
-        if valores is None:
-            return None
+        if valores is None: return None
         matriz = np.asarray(valores, dtype=float)
         if matriz.shape != (3, 4):
             raise ValueError('Cada mitad debe tener una matriz de 3 filas x 4 columnas.')
@@ -172,250 +715,110 @@ def dibujar_mapa_badminton_zonas(valores_superior=None, valores_inferior=None, m
     valores_superior = preparar_matriz(valores_superior)
     valores_inferior = preparar_matriz(valores_inferior)
 
+    # Normalización única
     todas_las_medidas = []
     for matriz in [valores_superior, valores_inferior]:
-        if matriz is not None:
-            todas_las_medidas.append(matriz.ravel())
-
+        if matriz is not None: todas_las_medidas.append(matriz.ravel())
+    
+    normalizador = None
     if todas_las_medidas:
         medidas = np.concatenate(todas_las_medidas)
         medidas = medidas[~np.isnan(medidas)]
-        minimo = float(np.min(medidas))
-        maximo = float(np.max(medidas))
-        normalizador = Normalize(vmin=minimo, vmax=maximo if maximo > minimo else minimo + 1)
-    else:
-        normalizador = None
+        if len(medidas) > 0:
+            normalizador = Normalize(vmin=np.min(medidas), vmax=np.max(medidas))
 
     def dibujar_mitad(origen_y, etiquetas, valores=None):
         for fila in range(3):
             for columna in range(4):
                 x = columna * zona_ancho
                 y = origen_y + fila * zona_alto
-
                 valor = None if valores is None else valores[fila, columna]
+                
                 if normalizador is not None and valor is not None and not np.isnan(valor):
-                    color_relleno = cmap(0.20 + 0.70 * normalizador(valor))
-                    alpha = 0.95
+                    color_relleno = cmap(0.2 + 0.7 * normalizador(valor))
                 else:
                     color_relleno = color_fondo
-                    alpha = 1.0
 
                 zona = patches.FancyBboxPatch(
-                    (x, y),
-                    zona_ancho,
-                    zona_alto,
+                    (x + 0.05, y + 0.05), zona_ancho - 0.1, zona_alto - 0.1,
                     boxstyle='round,pad=0.02,rounding_size=0.08',
-                    facecolor=color_relleno,
-                    edgecolor=color_borde,
-                    linewidth=1.6,
-                    alpha=alpha,
+                    facecolor=color_relleno, edgecolor=color_borde, linewidth=1.2
                 )
                 ax.add_patch(zona)
 
                 etiqueta = etiquetas[fila][columna]
-                color_texto = 'white' if (normalizador is not None and valor is not None and not np.isnan(valor) and normalizador(valor) > 0.55) else 'black'
-                ax.text(
-                    x + zona_ancho / 2,
-                    y + zona_alto / 2 + (0.10 if mostrar_porcentaje and valor is not None else 0.0),
-                    str(etiqueta),
-                    ha='center',
-                    va='center',
-                    fontsize=17,
-                    fontweight='bold',
-                    color=color_texto,
-                )
+                color_texto = 'white' if (normalizador and valor and normalizador(valor) > 0.55) else 'black'
+                
+                ax.text(x + zona_ancho/2, y + zona_alto/2 + 0.1, f'Z{int(etiqueta)}',
+                        ha='center', va='center', fontsize=14, fontweight='bold', color=color_texto)
 
                 if mostrar_porcentaje and valor is not None and not np.isnan(valor):
-                    valor_mostrado = valor
-                    if abs(valor_mostrado) <= 1:
-                        valor_mostrado *= 100
-                    ax.text(
-                        x + zona_ancho / 2,
-                        y + zona_alto / 2 - 0.20,
-                        f'{valor_mostrado:.1f}%',
-                        ha='center',
-                        va='center',
-                        fontsize=9,
-                        fontweight='normal',
-                        color=color_texto,
-                    )
+                    v = valor * 100 if abs(valor) <= 1 else valor
+                    ax.text(x + zona_ancho/2, y + zona_alto/2 - 0.2, f'{v:.1f}%',
+                            ha='center', va='center', fontsize=9, color=color_texto)
 
-    # Mitad superior: numeración de 12 a 1 empezando en la esquina superior derecha
-    etiquetas_superiores = [
-        [4,3,2,1],
-        [8,7,6,5],
-        [12,11,10,9],
+    # --- LÓGICA DE ESPEJO SOLICITADA ---
+    
+    # MITAD INFERIOR (Tu lado): Z1 a la IZQUIERDA
+    # fila 2 = Red, fila 1 = Media, fila 0 = Fondo
+    etiquetas_inferiores = [
+        [9, 10, 11, 12], 
+        [5, 6, 7, 8],    
+        [1, 2, 3, 4]     # Z1 en columna 0 (izquierda)
     ]
 
-    # Mitad inferior: numeración de 1 a 12 empezando en la esquina superior derecha
-    etiquetas_inferiores = [
-        [9,10,11,12],
-        [5,6,7,8],
-        [1,2,3,4],
+    # MITAD SUPERIOR (Lado rival): Z1 a la DERECHA
+    # fila 0 = Red, fila 1 = Media, fila 2 = Fondo
+    etiquetas_superiores = [
+        [4, 3, 2, 1],    # Z1 en columna 3 (derecha)
+        [8, 7, 6, 5],    
+        [12, 11, 10, 9]  
     ]
 
     dibujar_mitad(alto_mitad, etiquetas_superiores, valores_superior)
     dibujar_mitad(0, etiquetas_inferiores, valores_inferior)
 
-    # Líneas interiores de cada mitad
-    for x in [1, 2, 3]:
-        ax.plot([x, x], [0, alto_total], color='white', linewidth=1.1, alpha=0.6)
-
-    for y in [1, 2, 4, 5]:
-        ax.plot([0, ancho], [y, y], color='white', linewidth=1.1, alpha=0.6)
-
     plt.tight_layout()
-    plt.show()
+    return fig, ax
 
-dibujar_mapa_badminton_zonas()
+
+
+
 ```
 
-En primer lugar, se hace un recuento de las zonas de golpeo más frecuentes en el total de los partidos, sin hacer distinción por el momento entre jugadoras.
-
-```{python}
-frecuencia_zonas_golpeo = datos_badminton['Zone'].value_counts().reset_index()
-frecuencia_zonas_golpeo.columns = ['Zonas de golpeo', 'Frecuencia']
-
-print("--- Zonas de golpeo más habituales en los partidos ---")
-print(frecuencia_zonas_golpeo.head(10).to_string(index=False))
-```
-
-En la siguiente tabla se observan las zonas más frecuentes de golpeo por cada partido.
-
-```{python}
-frecuencias_golpeo_partido = datos_badminton.groupby(['Match'], sort=False)['Zone'].value_counts().reset_index()
-frecuencias_golpeo_partido.columns = ['Partido', 'Zonas de golpeo', 'Frecuencia']
-
-print("--- Zonas de golpeo más habituales en cada partido ---")
-print(frecuencias_golpeo_partido.head(10).to_string(index=False))
-```
-
-Teniendo ya las estadísticas generales, se observan las zonas más frecuentes para Carolina. Primeramete, se hace un conteo de todos los partidos. Este mismo conteo se presenta dividido por partidos inmediatamente después.
-
-```{python}
-frecuencia_zonas_golpeo_Carolina = datos_badminton.groupby(['Jugador del golpeo'])['Zone'].value_counts().reset_index()
-frecuencia_zonas_golpeo_Carolina.columns = ['Jugadora', 'Zonas de golpeo', 'Frecuencia']
-
-print("--- Zonas de golpeo más habituales de Carolina Marín en los partidos ---")
-print(frecuencia_zonas_golpeo_Carolina.head(10).to_string(index=False))
-```
-
-```{python}
-datos_Carolina = datos_badminton[datos_badminton['Jugador del golpeo'] == 'Carolina Marin']
-
-frecuencias_golpeo_partido_Carolina = datos_Carolina.groupby(['Match', 'Jugador del golpeo'], sort=False)['Zone'].value_counts().reset_index()
-frecuencias_golpeo_partido_Carolina.columns = ['Partido', 'Jugadora', 'Zonas de golpeo', 'Frecuencia']
-
-print("--- Zonas de golpeo más habituales en cada partido ---")
-print(frecuencias_golpeo_partido_Carolina.head(10).to_string(index=False))
-```
-
-Después del conteo básico, es importante conocer cuál de esas zonas es la que con más probabilidad hará ganar el punto a Carolina. Para ello se observa cuál ha sido la zona final de cada rally y si en esa zona la puntuación de Carolina en la columna *Player 1 Score* ha aumentado en una unidad. Siguiendo con la misma dinámica, primero se presenta esta información para todos los partidos. Seguidamente, se divide por encuentros. 
-
-```{python}
-def analizar_zonas_y_puntos(df):
-    df_temp = df.copy()
-    
-    # 1. Identificar el resultado de cada rally. Agrupar para saber el score final y la última zona de cada rally
-    rallies = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
-        'Player 1 Score': 'max',
-        'Zone': list,  # Guardamos la secuencia de zonas
-    }).reset_index()
-    
-    # 2. Determinar si Player1 ganó el punto (comparando con el rally anterior)
-    rallies['Score_Previo_P1'] = rallies.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
-    rallies['Gana_P1'] = rallies['Player 1 Score'] > rallies['Score_Previo_P1']
-    
-    # 3. Extraer la "Zona Final" de cada rally
-    rallies['Zona_Final'] = rallies['Zone'].apply(lambda x: x[-1])
-    
-    # 4. Filtrar solo los rallies que ganó Player1
-    rallies_ganados_p1 = rallies[rallies['Gana_P1'] == True]
-    
-    # 5. Contar cuántos puntos ganó P1 en cada zona final
-    resumen_zonas = rallies_ganados_p1['Zona_Final'].value_counts().reset_index()
-    resumen_zonas.columns = ['Zona', 'Puntos Ganados']
-    
-    # 6. Calcular efectividad: ¿Qué % de veces que el rally acaba en esa zona gana P1?
-    total_por_zona = rallies['Zona_Final'].value_counts().reset_index()
-    total_por_zona.columns = ['Zona', 'Total Rallies Finalizados']
-    
-    comparativa = resumen_zonas.merge(total_por_zona, on='Zona')
-    comparativa['% Efectividad P1'] = (comparativa['Puntos Ganados'] / comparativa['Total Rallies Finalizados'] * 100).round(2)
-    
-    orden_columnas = ['Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']
-    comparativa = comparativa[orden_columnas]
-
-    return comparativa.sort_values(by='Puntos Ganados', ascending=False)
-
-analisis_zonas = analizar_zonas_y_puntos(datos_badminton)
-print("--- Relación de Zonas Finales y Puntos Ganados por Player1 ---")
-print(analisis_zonas.to_string(index=False))
-```
-
-Tomando la fila de la zona 1 de ejemplo, se observa que 25 puntos (columna *Total Rallies Finalizados*) acabaron en la zona 1. De esos 25 puntos, 22 los ganó Carolina (columna *Puntos Ganados*), consiguiendo una efectividad (puntos ganados en esa zona / total de rallies finalizados en esa zona) del 88% en zona 1.
-
-Poniendo la atención en "Out" se observa que 69 puntos la secuencia de golepos acaba fuera de la pista, de los cuales 41 los gana Carolina. Es decir, solamente en 28 de 69 ocasiones Carolina ha enviado fuera el volante en comparación con las 41 de sus rivales.
-
-```{python}
-def analizar_zonas_y_puntos_partido(df):
-    df_temp = df.copy()
-    
-    # 1. Identificar el resultado de cada rally
-    rallies = df_temp.groupby(['Match', 'Set', 'Rally'], sort=False).agg({
-        'Player 1 Score': 'max',
-        'Zone': list,
-    }).reset_index()
-    
-    # 2. Determinar si Player1 ganó el punto
-    rallies['Score_Previo_P1'] = rallies.groupby(['Match', 'Set'])['Player 1 Score'].shift(1).fillna(0)
-    rallies['Gana_P1'] = rallies['Player 1 Score'] > rallies['Score_Previo_P1']
-    
-    # 3. Extraer la "Zona Final" de cada rally
-    rallies['Zona_Final'] = rallies['Zone'].apply(lambda x: x[-1])
-    
-    # 4. Puntos ganados por P1 por partido y zona. Agrupar por Match y Zona_Final
-    resumen_zonas = rallies[rallies['Gana_P1'] == True].groupby(['Match', 'Zona_Final']).size().reset_index(name='Puntos Ganados')
-    
-    # 5. Total de veces que un rally terminó en esa zona (gane quien gane)
-    total_por_zona = rallies.groupby(['Match', 'Zona_Final']).size().reset_index(name='Total Rallies Finalizados')
-    
-    # 6. Unir los dos conteos usando las columnas que tienen en común
-    comparativa = resumen_zonas.merge(total_por_zona, on=['Match', 'Zona_Final'])
-    
-    # 7. Calcular la efectividad
-    comparativa['% Efectividad P1'] = (comparativa['Puntos Ganados'] / comparativa['Total Rallies Finalizados'] * 100).round(2)
-    
-    # Renombrar columnas finales para que se vea bien en el print
-    comparativa.columns = ['Partido', 'Zona', 'Puntos Ganados', 'Total Rallies Finalizados', '% Efectividad P1']
-    
-    orden_columnas = ['Partido', 'Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']
-    comparativa = comparativa[orden_columnas]
-
-    return comparativa.sort_values(by=['Partido', 'Puntos Ganados'], ascending=[True, False])
-
-analisis_zonas_partido = analizar_zonas_y_puntos_partido(datos_badminton)
-print("--- Relación de Zonas Finales y Puntos Ganados por Player1 en cada partido ---")
-print(analisis_zonas_partido.to_string(index=False))
-```
 
 ```{python}
 def construir_matrices_metricas(resumen, columna_metricas):
     mapa_valores = {}
     for _, fila in resumen.iterrows():
         zona = fila['Zona']
-        if isinstance(zona, (int, np.integer)):
-            clave = int(zona)
-        else:
-            zona_txt = str(zona).strip()
-            if zona_txt.isdigit():
-                clave = int(zona_txt)
-            else:
-                continue
-        mapa_valores[clave] = float(fila[columna_metricas])
+        # Limpieza de zona para asegurar que es un entero
+        try:
+            clave = int(float(zona))
+            mapa_valores[clave] = float(fila[columna_metricas])
+        except (ValueError, TypeError):
+            continue
 
-    etiquetas_superior = [[9, 10, 11, 12], [5, 6, 7, 8], [1, 2, 3, 4]]
-    etiquetas_inferior = [[4, 3, 2, 1], [8, 7, 6, 5], [12, 11, 10, 9]]
+    # LÓGICA DE ESPEJO PROFESIONAL:
+    # Definimos las etiquetas de abajo hacia arriba para cada mitad (fila 0 es la más baja en Y)
+    
+    # Mitad Inferior (Y: 0 a 3): Z1 a la izquierda en la red
+    # Fila 2 (Cerca red): [1, 2, 3, 4]
+    # Fila 0 (Fondo): [9, 10, 11, 12]
+    etiquetas_inferior = [
+        [9, 10, 11, 12], 
+        [5, 6, 7, 8],    
+        [1, 2, 3, 4]
+    ]
+
+    # Mitad Superior (Y: 3 a 6): Z1 a la derecha en la red (Espejo)
+    # Fila 0 (Cerca red): [4, 3, 2, 1]
+    # Fila 2 (Fondo): [12, 11, 10, 9]
+    etiquetas_superior = [
+        [4, 3, 2, 1],    
+        [8, 7, 6, 5],    
+        [12, 11, 10, 9]
+    ]
 
     valores_superior = np.array([[mapa_valores.get(z, np.nan) for z in fila] for fila in etiquetas_superior], dtype=float)
     valores_inferior = np.array([[mapa_valores.get(z, np.nan) for z in fila] for fila in etiquetas_inferior], dtype=float)
@@ -427,163 +830,138 @@ def dibujar_campograma_metricas(ax, etiquetas_superior, etiquetas_inferior, valo
     ancho = 4
     alto_mitad = 3
     alto_total = 6
-    color_fondo = '#dbeeff'
+    color_fondo = '#f0f7ff' # Un azul muy suave de fondo
     color_borde = '#f4b6b6'
 
-    ax.set_xlim(0, ancho)
-    ax.set_ylim(0, alto_total)
+    ax.set_xlim(-0.2, ancho + 0.2)
+    ax.set_ylim(-0.2, alto_total + 0.4)
     ax.set_aspect('equal')
     ax.axis('off')
-    ax.set_title(titulo, fontsize=12, fontweight='bold', pad=12)
+    ax.set_title(titulo, fontsize=14, fontweight='bold', pad=15)
 
-    valores = np.concatenate([valores_superior.ravel(), valores_inferior.ravel()])
-    valores = valores[~np.isnan(valores)]
-    if len(valores) > 0:
-        minimo = float(valores.min())
-        maximo = float(valores.max())
-        normalizador = Normalize(vmin=minimo, vmax=maximo if maximo > minimo else minimo + 1)
+    # Normalización de colores (Global para ambas mitades)
+    valores_total = np.concatenate([valores_superior.ravel(), valores_inferior.ravel()])
+    valores_total = valores_total[~np.isnan(valores_total)]
+    
+    if len(valores_total) > 0:
+        normalizador = Normalize(vmin=valores_total.min(), vmax=valores_total.max())
     else:
         normalizador = None
 
-    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, facecolor=color_fondo, edgecolor='none'))
-    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, fill=False, edgecolor='gray', linewidth=1.8))
-    ax.plot([0, ancho], [alto_mitad, alto_mitad], color='black', linewidth=2.2)
+    # Dibujo de la pista
+    ax.add_patch(patches.Rectangle((0, 0), ancho, alto_total, facecolor='white', edgecolor='gray', linewidth=2, zorder=1))
+    ax.plot([0, ancho], [alto_mitad, alto_mitad], color='black', linewidth=3, zorder=5) # Red
 
     zona_ancho = ancho / 4
     zona_alto = alto_mitad / 3
 
-    def pintar_mitad(origen_y, etiquetas, valores_matriz):
+    def pintar_mitad(origen_y, etiquetas_matriz, valores_matriz):
         for fila in range(3):
             for columna in range(4):
                 x = columna * zona_ancho
                 y = origen_y + fila * zona_alto
                 valor = valores_matriz[fila, columna]
 
+                # Color de fondo según métrica
                 if normalizador is not None and not np.isnan(valor):
-                    color_relleno = cmap(0.20 + 0.70 * normalizador(valor))
+                    color_relleno = cmap(0.15 + 0.75 * normalizador(valor))
                 else:
                     color_relleno = color_fondo
 
-                zona = patches.FancyBboxPatch(
-                    (x, y),
-                    zona_ancho,
-                    zona_alto,
-                    boxstyle='round,pad=0.02,rounding_size=0.08',
-                    facecolor=color_relleno,
-                    edgecolor=color_borde,
-                    linewidth=1.6,
+                # Dibujo de la celda (zona)
+                zona_patch = patches.FancyBboxPatch(
+                    (x + 0.05, y + 0.05), zona_ancho - 0.1, zona_alto - 0.1,
+                    boxstyle='round,pad=0.02,rounding_size=0.05',
+                    facecolor=color_relleno, edgecolor=color_borde, linewidth=1, zorder=2
                 )
-                ax.add_patch(zona)
+                ax.add_patch(zona_patch)
 
-                texto_color = 'white' if normalizador is not None and not np.isnan(valor) and normalizador(valor) > 0.55 else 'black'
-                ax.text(
-                    x + zona_ancho / 2,
-                    y + zona_alto / 2 + 0.10,
-                    str(etiquetas[fila][columna]),
-                    ha='center',
-                    va='center',
-                    fontsize=16,
-                    fontweight='bold',
-                    color=texto_color,
-                )
+                # Texto
+                txt_color = 'white' if normalizador and not np.isnan(valor) and normalizador(valor) > 0.6 else 'black'
+                
+                # ID de Zona
+                ax.text(x + zona_ancho/2, y + zona_alto/2 + 0.12, f"Z{int(etiquetas_matriz[fila][columna])}", 
+                        ha='center', va='center', fontsize=11, fontweight='bold', color=txt_color, zorder=3)
+                
+                # Valor métrica
                 if not np.isnan(valor):
-                    ax.text(
-                        x + zona_ancho / 2,
-                        y + zona_alto / 2 - 0.17,
-                        formato_valor(valor),
-                        ha='center',
-                        va='center',
-                        fontsize=9,
-                        color=texto_color,
-                    )
+                    ax.text(x + zona_ancho/2, y + zona_alto/2 - 0.15, formato_valor(valor),
+                            ha='center', va='center', fontsize=9, color=txt_color, zorder=3)
 
     pintar_mitad(alto_mitad, etiquetas_superior, valores_superior)
     pintar_mitad(0, etiquetas_inferior, valores_inferior)
 
-    for x in [1, 2, 3]:
-        ax.plot([x, x], [0, alto_total], color='white', linewidth=1.1, alpha=0.6)
+# --- GENERACIÓN DEL GRÁFICO FINAL ---
 
-    for y in [1, 2, 4, 5]:
-        ax.plot([0, ancho], [y, y], color='white', linewidth=1.1, alpha=0.6)
+fig = plt.figure(figsize=(15, 8))
+# Título principal con la explicación técnica solicitada
+fig.suptitle("ANÁLISIS DE EFECTIVIDAD POSICIONAL (CAROLINA MARÍN)\n"
+             "Los datos representan la posición del último golpeo realizado por la jugadora en cada rally", 
+             fontsize=14, fontweight='bold', y=0.98)
 
+# Configuramos 3 subplots (Total, Ganados, Efectividad)
+gs = fig.add_gridspec(1, 3)
 
-fig = plt.figure(figsize=(13, 7.5), constrained_layout=True)
-gs = fig.add_gridspec(2, 3, height_ratios=[10, 1.4])
-
-metricas = [
-    ('Total Rallies Finalizados', 'Total Rallies Finalizados', plt.cm.Blues, lambda v: f'{v:.0f}'),
+metricas_config = [
+    ('Frecuencia de Cierre', 'Total Rallies Finalizados', plt.cm.Blues, lambda v: f'{v:.0f}'),
     ('Puntos Ganados', 'Puntos Ganados', plt.cm.Greens, lambda v: f'{v:.0f}'),
-    ('% Efectividad P1', '% Efectividad P1', plt.cm.Oranges, lambda v: f'{v:.2f}%'),
+    ('% Efectividad', '% Efectividad P1', plt.cm.Oranges, lambda v: f'{v:.1f}%'),
 ]
 
-for indice, (titulo, columna_metricas, cmap, formato_valor) in enumerate(metricas):
-    ax = fig.add_subplot(gs[0, indice])
-    etiquetas_superior, etiquetas_inferior, valores_superior, valores_inferior = construir_matrices_metricas(
-        analisis_zonas,
-        columna_metricas,
-    )
-    dibujar_campograma_metricas(
-        ax,
-        etiquetas_superior,
-        etiquetas_inferior,
-        valores_superior,
-        valores_inferior,
-        titulo,
-        formato_valor,
-        cmap,
-    )
+for i, (titulo, col, colormap, formato) in enumerate(metricas_config):
+    ax = fig.add_subplot(gs[0, i])
+    etiq_sup, etiq_inf, val_sup, val_inf = construir_matrices_metricas(analisis_zonas, col)
+    dibujar_campograma_metricas(ax, etiq_sup, etiq_inf, val_sup, val_inf, titulo, formato, colormap)
 
-ax_tabla = fig.add_subplot(gs[1, :])
-ax_tabla.axis('off')
-
-zonas_especiales = analisis_zonas[analisis_zonas['Zona'].isin(['Red', 'Out'])].copy()
-if not zonas_especiales.empty:
-    zonas_especiales = zonas_especiales[['Zona', 'Total Rallies Finalizados', 'Puntos Ganados', '% Efectividad P1']]
-    tabla = ax_tabla.table(
-        cellText=zonas_especiales.values,
-        colLabels=zonas_especiales.columns,
-        cellLoc='center',
-        loc='center',
-    )
-    tabla.auto_set_font_size(False)
-    tabla.set_fontsize(10)
-    tabla.scale(1, 1.15)
-    ax_tabla.set_title('Resumen de zonas especiales', fontsize=11, fontweight='bold', pad=8)
-else:
-    ax_tabla.text(0.5, 0.5, 'No se encontraron filas para Red / Out en analisis_zonas.', ha='center', va='center')
-
+plt.tight_layout(rect=[0, 0.03, 1, 0.93])
 plt.show()
 ```
 
+
+```{python}
+#| include: false
+
+# Eliminamos cosas del enviroment para no saturar. 
+del analisis_zonas, analisis_zonas_partido, datos_Carolina, frecuencia_zonas_golpeo, frecuencia_zonas_golpeo_Carolina, frecuencias_golpeo_partido, frecuencias_golpeo_partido_Carolina, resumen_columnas, resumen_sets
+```
+
+
+---
+
 # Secuencias de golpeo
 
-Conociendo ya las frecuencias de las zonas de golpeo, se da un paso más para estudiar las secuencias de golpeo. En otras palabras, se observan las zonas desde donde se golpea el volante cada vez hasta que este toca el suelo, la red o va fuera de la pista.
+Hasta el momento se han analizado las zonas de golpeo más frecuentes y efectivas, pero no se ha analizado las secuencias que llevan a esos golpes. Es decir, no se ha analizado desde dónde golpea Carolina Marín hasta dónde golpea el rival, ni las zonas desde donde golpea el rival hasta dónde golpea Carolina Marín.
 
-Para ello se muestra una tabla en la que se presentan las secuencias de golpeo de cada rally por partido y set.
+A continuación, vamos a mostrar en una tabla las secuencias de golpeo totales de cada rally por partido y set. Indicando quién es la jugadora que golpea primero. 
 
 ```{python}
 def procesar_secuencias_badminton_partido(df):
-    df = datos_badminton.copy() # Hacer una copia para no alterar el original
+    df_temp = df.copy() 
+    
     # 1. Limpieza
-    df['Zone'] = df['Zone'].astype(str).str.strip()
+    df_temp['Zone'] = df_temp['Zone'].astype(str).str.strip()
     
-    # 2. El ID de secuencia debe cambiar si cambia el Partido, el Set O el Rally
-    cambio_contexto = (df['Match'] != df['Match'].shift()) | \
-                      (df['Set'] != df['Set'].shift()) | \
-                      (df['Rally'] != df['Rally'].shift())
+    # 2. El ID de secuencia cambia si cambia el Partido, el Set O el Rally
+    cambio_contexto = (df_temp['Match'] != df_temp['Match'].shift()) | \
+                      (df_temp['Set'] != df_temp['Set'].shift()) | \
+                      (df_temp['Rally'] != df_temp['Rally'].shift())
     
-    df['secuencia_id'] = cambio_contexto.cumsum()
+    df_temp['secuencia_id'] = cambio_contexto.cumsum()
     
-    tabla = df.groupby(['Match', 'Set', 'Rally', 'secuencia_id'], sort=False).agg({
+    # 3. Agrupación: añadimos 'Jugador del golpeo' con la función 'first'
+    tabla = df_temp.groupby(['Match', 'Set', 'Rally', 'secuencia_id'], sort=False).agg({
+        'Jugador del golpeo': 'first',  # <--- Captura quién empezó el rally
         'Zone': lambda x: ' -> '.join(x),
-        'Stroke': max}).reset_index()
+        'Stroke': 'max'
+    }).reset_index()
     
-    # 3. Seleccionar columnas finales
-    tabla = tabla[['Match', 'Set', 'Rally', 'Stroke', 'Zone']]
-    tabla.columns = ['Partido', 'Set', 'Rally', 'Número de Golpes', 'Secuencia de Zonas']
+    # 4. Seleccionar y renombrar columnas finales
+    tabla = tabla[['Match', 'Set', 'Rally', 'Jugador del golpeo', 'Stroke', 'Zone']]
+    tabla.columns = ['Partido', 'Set', 'Rally', 'Inicia el Rally', 'Número de Golpes', 'Secuencia de Zonas']
     
     return tabla
 
+# Uso:
 resultado = procesar_secuencias_badminton_partido(datos_badminton)
 show(resultado)
 ```
@@ -659,6 +1037,10 @@ frecuencia_longitudes_rallies_partido = frecuencia_longitudes_rallies_partido.so
 print("--- Longitudes más habituales en cada partido ---")
 print(frecuencia_longitudes_rallies_partido.head(10).to_string(index=False))
 ```
+
+
+---
+
 
 # Extracción de patrones de longitud 3
 
